@@ -1,0 +1,38 @@
+{
+  "name": "dsh-boss-worker",
+  "version": "0.1.0-beta.1",
+  "private": true,
+  "files": ["index.js", "client.js", "src/", "cordis.patch.yml", "README.md", "README.en.md", "LICENSE"],
+  "author": "kongbai9420",
+  "license": "MIT",
+  "scripts": {"test": "node --test test/*.test.mjs", "test:client": "node test/client-sim.mjs"},
+  "repository": {"type": "git", "url": "https://github.com/kongbai9420/dsh-boss-worker.git"},
+  "description": "DeepSeek Harness 主从协作团队插件：支持 Astra 纲要提炼、多子模型(Sol等)执行与严格验收闭环，提供前端团队配置与任务看板",
+  "main": "./index.js",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.7-rc.2",
+    "@deepseek-ai/dsh-subagent": "^0.1.7-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.1.7-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.4"
+  }
+}

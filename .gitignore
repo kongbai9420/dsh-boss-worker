@@ -1,0 +1,12 @@
+node_modules/
+backups/
+*.log
+*.tmp
+*.tgz
+.env*
+!.env.example
+session-configs.json
+audit-evidence.json
+regression-output.txt
+.DS_Store
+coverage/

@@ -1,0 +1,28 @@
+- insert:
+    - id: lead-worker
+      name: "dsh-boss-worker"
+      config:
+        defaultConfig:
+          enabled: true
+          mode: mixed
+          maxParallel: 4
+          maxRetries: 2
+          confirmPlan: true
+          askApprovalPrompt: true
+          members:
+            - id: worker-sol
+              name: "Sol (代码执行与实现)"
+              provider: "deepseek-official"
+              model: "deepseek-v4-pro"
+              role: "负责代码编写、文件修改、功能实现与自测"
+              instructions: "全程中文；严格按任务范围执行，实现并测试后报告文件改动与验证证据。"
+              enabled: true
+              readOnly: false
+            - id: worker-qa
+              name: "QA 测试员 (验证与审查)"
+              provider: "deepseek-official"
+              model: "deepseek-flash"
+              role: "负责测试、验证和质量把关"
+              instructions: "全程中文，只读审查实现与测试，提供缺陷依据和验证结果。"
+              enabled: true
+              readOnly: true
