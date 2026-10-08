@@ -314,7 +314,7 @@ export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask
             executionEpoch: currentTask.executionEpoch,
             deliverables: currentTask.deliverables || []
           };
-          const gate = evaluateQualityGate(currentTask, submission, {});
+          const gate = evaluateQualityGate({ ...currentTask, maxRetries: board.config.maxRetries }, submission, { maxRetries: board.config.maxRetries, reviewPassed: args.passed });
           if (gate && gate.summary) {
             reviewFeedback = reviewFeedback.trim()
               ? `${gate.summary}\n\n【主控审查意见】\n${reviewFeedback.trim()}`

@@ -915,7 +915,12 @@ export function generateReviewSummary(result, contract = {}, submission = {}, ho
     `### 验收把关报告: ${taskId} (${taskTitle})`,
     `- **最终裁决**: ${verdictBadge}`,
     `- **自动验收控制**: ${autoAcceptBadge}`,
-    `- **返工状态**: 已返工 ${safety.retries} / 上限 ${safety.maxRetries} 次${safety.requiresUserApproval ? ' (⚠️ 超限阻断，需用户专门授权)' : ''}`,
+    `- **返工状态（本次审查前）**: 已返工 ${safety.retries} / 上限 ${safety.maxRetries} 次`,
+    ...(typeof hostContext.reviewPassed === 'boolean' ? [hostContext.reviewPassed
+      ? `- **本次审查处理**: 通过；返工计数保持 ${safety.retries} / ${safety.maxRetries} 次`
+      : safety.retries < safety.maxRetries
+        ? `- **本次打回后**: 进入第 ${safety.retries + 1} 次返工；返工计数 ${safety.retries + 1} / ${safety.maxRetries} 次`
+        : `- **本次打回后**: 已达返工上限，暂停并等待用户专门授权；返工计数保持 ${safety.retries} / ${safety.maxRetries} 次`] : []),
     '',
     '#### 📊 指标核对',
     `- 范围违规文件数: ${metrics.scopeViolationsCount || 0}`,

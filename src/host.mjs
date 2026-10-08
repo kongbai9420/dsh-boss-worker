@@ -1064,7 +1064,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
               executionEpoch: boardTask.executionEpoch,
               deliverables: boardTask.deliverables || []
             };
-            const gate = evaluateQualityGate(boardTask, submission, {});
+            const gate = evaluateQualityGate({ ...boardTask, maxRetries: board.config.maxRetries }, submission, { maxRetries: board.config.maxRetries, reviewPassed: params.passed });
             if (gate && gate.summary) {
               reviewFeedback = reviewFeedback.trim()
                 ? `${gate.summary}\n\n【主控审查意见】\n${reviewFeedback.trim()}`
