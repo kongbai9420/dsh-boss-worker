@@ -175,6 +175,12 @@ export class LeadWorkerHostService extends Service {
       if (!tools?.guard) return;
       tools.guard((exec) => {
         const sessionId = exec?.agent?.session?.header?.id;
+        if (sessionId && this.#automaticDispatchStopped.has(sessionId)) {
+          const config = this.getConfig(sessionId);
+          const header = exec.agent?.session?.header;
+          const name = String(exec.name || '').split('.').pop();
+          if (!config.bossDirect && !config.autopilot && !header?.parentSession && header?.origin !== 'subagent' && ['subagent', 'subagent_fork', 'workflow', 'lead_worker_plan', 'lead_worker_dispatch'].includes(name)) return '当前会话已关闭BOSS直派和托管，请主模型直接处理任务，不要新建或派发子模型任务。';
+        }
         return sessionId ? bossGuardReason(exec, this.getConfig(sessionId)) : undefined;
       });
     });
@@ -197,6 +203,7 @@ export class LeadWorkerHostService extends Service {
         getMemberCatalog: (sessionId) => this.getConfig(sessionId).members,
         dispatchTask: (sessionId, taskId, exec) => this.dispatchTask(sessionId, taskId, exec),
         scheduleReadyTasks: (sessionId, exec, explicitTaskId) => this.scheduleReadyTasks(sessionId, exec, explicitTaskId),
+        isDelegationDisabled: sessionId => this.#automaticDispatchStopped.has(sessionId) && !this.getConfig(sessionId).bossDirect && !this.getConfig(sessionId).autopilot,
         askUserQuestion: async (questions, exec) => toolsCtx.userQuestions.ask({ questions, agent: exec.agent, signal: exec.signal })
       });
       for (const tool of tools) {
@@ -215,6 +222,7 @@ export class LeadWorkerHostService extends Service {
           const board = this.#boards.get(sessionId);
           const config = this.getConfig(sessionId);
           if (!config || !config.enabled) return '';
+          if (this.#automaticDispatchStopped.has(sessionId) && !config.bossDirect && !config.autopilot) return '当前会话已关闭BOSS直派与全自动托管。使用主模型直接处理用户请求，不调用子智能体或新建团队任务，不询问团队计划批准。只可对已有子任务收尾结果进行必要验收；需要恢复团队委派时由用户重新开启模式。';
           const coordinationActive = config.bossDirect === true || config.autopilot === true;
           const configuredPrompt = (config.leadPrompt || '').replace(/【👑 BOSS直派规则】:[^\n]*\n?/g, '').trim();
           const leadPrompt = !coordinationActive && configuredPrompt === DEFAULT_TEAM_CONFIG.leadPrompt ? '' : configuredPrompt;
@@ -595,7 +603,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
 
   async scheduleReadyTasks(sessionId, exec, explicitTaskId = null) {
     const latestConfig = this.getConfig(sessionId);
-    if (!explicitTaskId && this.#automaticDispatchStopped.has(sessionId) && !latestConfig.bossDirect && !latestConfig.autopilot) return [];
+    if (this.#automaticDispatchStopped.has(sessionId) && !latestConfig.bossDirect && !latestConfig.autopilot) return [];
     const liveAgent = this.ctx.get('agents')?.get(sessionId);
     const parent = requireParent(sessionId, liveAgent ? { agent: liveAgent } : exec, this.ctx.get('agents'));
     // Do not retain a tool call's abort signal for background work or future resume.
@@ -762,7 +770,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       this.#sessionAutopilot.set(sessionId, next.autopilot);
       this.#sessionConfigs.set(sessionId, next);
       if (next.bossDirect || next.autopilot) this.#automaticDispatchStopped.delete(sessionId);
-      else this.#automaticDispatchStopped.add(sessionId);
+      else if (!params.unchangedModes || current.bossDirect || current.autopilot) this.#automaticDispatchStopped.add(sessionId);
       this.#configRevision++;
       this.persistStore();
       if (next.autopilot && this.#boards.get(sessionId)?.snapshot().status === 'ready') await this.scheduleReadyTasks(sessionId, this.#sessionExecs.get(sessionId) || {});
@@ -775,7 +783,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       const existing = this.#boards.get(sessionId);
       const wasAutomatic = this.getConfig(sessionId).bossDirect || this.getConfig(sessionId).autopilot;
       const shared = value => ({ ...value, bossDirect: false, autopilot: false, members: value.members.filter(m => !m.id.startsWith('task-route-')) });
-      if (JSON.stringify(shared(newConfig)) === JSON.stringify(shared(this.getConfig(sessionId)))) return this.handleAction(sessionId, 'configureSession', { bossDirect: newConfig.bossDirect, autopilot: newConfig.autopilot, expectedConfigRevision: params.expectedConfigRevision });
+      if (JSON.stringify(shared(newConfig)) === JSON.stringify(shared(this.getConfig(sessionId)))) return this.handleAction(sessionId, 'configureSession', { bossDirect: newConfig.bossDirect, autopilot: newConfig.autopilot, expectedConfigRevision: params.expectedConfigRevision, unchangedModes: true });
       const candidates = new Map();
       const sessionIds = new Set([sessionId, ...this.#sessionConfigs.keys(), ...this.#boards.keys(), ...this.#sessionStates.keys()]);
       // Validate every session before changing any config or board. A shared member

@@ -204,6 +204,11 @@ test('turning autopilot off revokes prior authorization and restores confirmPlan
   assert.throws(() => f.board.start('second'), err => err.code === 'APPROVAL_REQUIRED');
   await f.service.handleAction(f.id, 'approve', {});
   assert.deepEqual(await f.service.scheduleReadyTasks(f.id, f.exec), [], 'approval alone does not reenable automatic dispatch after both switches are off');
+   assert.deepEqual(await f.service.scheduleReadyTasks(f.id, f.exec, 'second'), []);
+   const blocked = await f.tool('lead_worker_plan').execute({ tasks: [task('blocked')] }, f.exec);
+   assert.equal(blocked.code, 'DELEGATION_DISABLED');
+   assert.equal((await f.tool('lead_worker_dispatch').execute({ taskId: 'second' }, f.exec)).code, 'DELEGATION_DISABLED');
+   await f.service.handleAction(f.id, 'configureSession', { bossDirect: true });
    assert.deepEqual(await f.service.scheduleReadyTasks(f.id, f.exec, 'second'), ['second']);
   await complete(f, 1);
   await f.service.handleAction(f.id, 'review', { taskId: 'second', passed: true, feedback: 'Mock checked' });

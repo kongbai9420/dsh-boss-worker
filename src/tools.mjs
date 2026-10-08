@@ -17,7 +17,7 @@ function resolveSessionId(exec) {
   return candidates.find(value => typeof value === 'string' && value.trim()) || null;
 }
 
-export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask, scheduleReadyTasks, resetBoard, askUserQuestion, batchAction }) {
+export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask, scheduleReadyTasks, resetBoard, askUserQuestion, batchAction, isDelegationDisabled = () => false }) {
   const sessionOf = (exec) => {
     const sessionId = resolveSessionId(exec);
     if (!sessionId) throw new Error('无法解析当前对话 sessionId，已拒绝创建错误任务板');
@@ -86,6 +86,7 @@ export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask
     isConcurrencySafe: () => false,
     async execute(args, exec) {
       const sessionId = sessionOf(exec);
+      if (isDelegationDisabled(sessionId)) return { error: '当前会话已关闭BOSS直派与全托管，请主模型直接处理任务，不得新增子模型计划或弹出计划确认。', code: 'DELEGATION_DISABLED' };
       let board = getBoard(sessionId);
       if (!board) throw new Error('当前会话未启用 BOSS直派协作团队');
       if (!Array.isArray(args?.tasks) || args.tasks.length === 0) {
@@ -243,6 +244,7 @@ export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask
       const sessionId = sessionOf(exec);
       const board = getBoard(sessionId);
       if (!board) throw new Error('当前会话未启用 BOSS直派协作团队');
+      if (isDelegationDisabled(sessionId)) return { error: '当前会话已关闭委派，请主模型直接处理任务；不启动子模型。', code: 'DELEGATION_DISABLED' };
       const target = board.snapshot().tasks.find(t => t.id === args.taskId);
       const overlapsRunningScope = target && board.snapshot().tasks.some(other => other.status === 'running' &&
         !target.readOnly && !board.config.members.find(m => m.id === target.memberId)?.readOnly &&
