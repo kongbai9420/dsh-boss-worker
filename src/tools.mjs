@@ -86,7 +86,6 @@ export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask
     isConcurrencySafe: () => false,
     async execute(args, exec) {
       const sessionId = sessionOf(exec);
-      if (isDelegationDisabled(sessionId)) return { error: '当前会话已关闭BOSS直派与全托管，请主模型直接处理任务，不得新增子模型计划或弹出计划确认。', code: 'DELEGATION_DISABLED' };
       let board = getBoard(sessionId);
       if (!board) throw new Error('当前会话未启用 BOSS直派协作团队');
       if (!Array.isArray(args?.tasks) || args.tasks.length === 0) {
@@ -131,7 +130,7 @@ export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask
         let accepted = false;
         const beforeRevision = board.snapshot().revision;
         const beforeConfig = JSON.stringify(board.config);
-        if (!board.config.autopilot && board.config.confirmPlan && board.config.askApprovalPrompt !== false) {
+        if (!isDelegationDisabled(sessionId) && !board.config.autopilot && board.config.confirmPlan && board.config.askApprovalPrompt !== false) {
           // Validate on a detached board before prompting; a rejection must
           // leave the live board and its history completely untouched.
           const { TeamBoard } = await import('./core.mjs');
@@ -149,6 +148,11 @@ export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask
           if (JSON.stringify(board.config) !== beforeConfig || board.snapshot().revision !== beforeRevision) throw new Error('确认期间任务板或模式已变更，本次计划未入队，请重新核对');
         }
         const planned = args.append ? board.appendTasks(tasksToPlan, 'model') : board.plan(tasksToPlan, 'model');
+        if (isDelegationDisabled(sessionId)) {
+          // Explicit use remains available without plugin-generated dialogs;
+          // no background dispatch is triggered while the mode is off.
+          return planned;
+        }
         if (accepted) {
           board.approve('user');
           if (board.config.bossDirect) await scheduleReadyTasks(sessionId, exec);
@@ -244,7 +248,6 @@ export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask
       const sessionId = sessionOf(exec);
       const board = getBoard(sessionId);
       if (!board) throw new Error('当前会话未启用 BOSS直派协作团队');
-      if (isDelegationDisabled(sessionId)) return { error: '当前会话已关闭委派，请主模型直接处理任务；不启动子模型。', code: 'DELEGATION_DISABLED' };
       const target = board.snapshot().tasks.find(t => t.id === args.taskId);
       const overlapsRunningScope = target && board.snapshot().tasks.some(other => other.status === 'running' &&
         !target.readOnly && !board.config.members.find(m => m.id === target.memberId)?.readOnly &&

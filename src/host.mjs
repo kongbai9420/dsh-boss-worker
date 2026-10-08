@@ -175,12 +175,6 @@ export class LeadWorkerHostService extends Service {
       if (!tools?.guard) return;
       tools.guard((exec) => {
         const sessionId = exec?.agent?.session?.header?.id;
-        if (sessionId && this.#automaticDispatchStopped.has(sessionId)) {
-          const config = this.getConfig(sessionId);
-          const header = exec.agent?.session?.header;
-          const name = String(exec.name || '').split('.').pop();
-          if (!config.bossDirect && !config.autopilot && !header?.parentSession && header?.origin !== 'subagent' && ['subagent', 'subagent_fork', 'workflow', 'lead_worker_plan', 'lead_worker_dispatch'].includes(name)) return '当前会话已关闭BOSS直派和托管，请主模型直接处理任务，不要新建或派发子模型任务。';
-        }
         return sessionId ? bossGuardReason(exec, this.getConfig(sessionId)) : undefined;
       });
     });
@@ -222,7 +216,7 @@ export class LeadWorkerHostService extends Service {
           const board = this.#boards.get(sessionId);
           const config = this.getConfig(sessionId);
           if (!config || !config.enabled) return '';
-          if (this.#automaticDispatchStopped.has(sessionId) && !config.bossDirect && !config.autopilot) return '当前会话已关闭BOSS直派与全自动托管。使用主模型直接处理用户请求，不调用子智能体或新建团队任务，不询问团队计划批准。只可对已有子任务收尾结果进行必要验收；需要恢复团队委派时由用户重新开启模式。';
+          if (this.#automaticDispatchStopped.has(sessionId) && !config.bossDirect && !config.autopilot) return '';
           const coordinationActive = config.bossDirect === true || config.autopilot === true;
           const configuredPrompt = (config.leadPrompt || '').replace(/【👑 BOSS直派规则】:[^\n]*\n?/g, '').trim();
           const leadPrompt = !coordinationActive && configuredPrompt === DEFAULT_TEAM_CONFIG.leadPrompt ? '' : configuredPrompt;
@@ -482,6 +476,8 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
   async notifyPhaseReview(sessionId, event = {}) {
     const board = this.#boards.get(sessionId);
     if (!board) return { delivered: false, reason: 'NO_BOARD' };
+    const config = this.getConfig(sessionId);
+    if (this.#automaticDispatchStopped.has(sessionId) && !config.bossDirect && !config.autopilot) return { delivered: false, reason: 'MODE_OFF' };
     const snap = board.snapshot();
     if (snap.status !== 'ready' && event.type === 'batch_settled') return { delivered: false, reason: 'BOARD_NOT_READY' };
     const batchId = snap.batchId || 1;
@@ -603,7 +599,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
 
   async scheduleReadyTasks(sessionId, exec, explicitTaskId = null) {
     const latestConfig = this.getConfig(sessionId);
-    if (this.#automaticDispatchStopped.has(sessionId) && !latestConfig.bossDirect && !latestConfig.autopilot) return [];
+    if (!explicitTaskId && this.#automaticDispatchStopped.has(sessionId) && !latestConfig.bossDirect && !latestConfig.autopilot) return [];
     const liveAgent = this.ctx.get('agents')?.get(sessionId);
     const parent = requireParent(sessionId, liveAgent ? { agent: liveAgent } : exec, this.ctx.get('agents'));
     // Do not retain a tool call's abort signal for background work or future resume.
