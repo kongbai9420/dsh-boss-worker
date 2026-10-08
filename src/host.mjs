@@ -101,6 +101,7 @@ export class LeadWorkerHostService extends Service {
   #store;
   #sessionBoss = new Map();
   #sessionAutopilot = new Map();
+  #automaticDispatchStopped = new Set();
   #sessionStates = new Map();
   #schedulerJobs = new Map();
   #activeExecutions = new Map();
@@ -122,6 +123,7 @@ export class LeadWorkerHostService extends Service {
       if (Number.isSafeInteger(stored.configRevision)) this.#configRevision = stored.configRevision;
       if (stored.shared) {
         this.#sharedConfig = new TeamBoard(stored.shared).config;
+        for (const id of stored.automaticDispatchStopped || []) if (typeof id === 'string') this.#automaticDispatchStopped.add(id);
         for (const [id, value] of Object.entries(stored.sessionAutopilot || {})) {
           if (typeof value === 'boolean') this.#sessionAutopilot.set(id, value);
         }
@@ -194,7 +196,7 @@ export class LeadWorkerHostService extends Service {
         batchAction: (sessionId, action, params) => this.handleAction(sessionId, action, params),
         getMemberCatalog: (sessionId) => this.getConfig(sessionId).members,
         dispatchTask: (sessionId, taskId, exec) => this.dispatchTask(sessionId, taskId, exec),
-        scheduleReadyTasks: (sessionId, exec) => this.scheduleReadyTasks(sessionId, exec),
+        scheduleReadyTasks: (sessionId, exec, explicitTaskId) => this.scheduleReadyTasks(sessionId, exec, explicitTaskId),
         askUserQuestion: async (questions, exec) => toolsCtx.userQuestions.ask({ questions, agent: exec.agent, signal: exec.signal })
       });
       for (const tool of tools) {
@@ -337,6 +339,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       boards: Object.fromEntries(this.#sessionStates),
       sessionBoss: Object.fromEntries(this.#sessionBoss),
       sessionAutopilot: Object.fromEntries(this.#sessionAutopilot),
+      automaticDispatchStopped: [...this.#automaticDispatchStopped],
       sessionRoutes: Object.fromEntries(this.#sessionRoutes),
     };
     writeFileSync(temporary, JSON.stringify(value, null, 2), 'utf8');
@@ -584,7 +587,9 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
     this.#sessionStates.set(sessionId, state);
   }
 
-  async scheduleReadyTasks(sessionId, exec) {
+  async scheduleReadyTasks(sessionId, exec, explicitTaskId = null) {
+    const latestConfig = this.getConfig(sessionId);
+    if (!explicitTaskId && this.#automaticDispatchStopped.has(sessionId) && !latestConfig.bossDirect && !latestConfig.autopilot) return [];
     const liveAgent = this.ctx.get('agents')?.get(sessionId);
     const parent = requireParent(sessionId, liveAgent ? { agent: liveAgent } : exec, this.ctx.get('agents'));
     // Do not retain a tool call's abort signal for background work or future resume.
@@ -629,7 +634,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
     const runningCount = running.length;
     const occupiedMembers = new Set(running.map(t => t.memberId));
     const scheduledScopes = [...running];
-    const available = snapshot.tasks.filter(task => task.status === 'pending' && task.memberId &&
+    const available = snapshot.tasks.filter(task => (!explicitTaskId || task.id === explicitTaskId) && task.status === 'pending' && task.memberId &&
       (snapshot.approved || board.isTaskExecutionApproved(task.id)) &&
       task.dependencies.every(id => snapshot.tasks.find(dep => dep.id === id)?.status === 'done') &&
       !occupiedMembers.has(task.memberId));
@@ -640,6 +645,8 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       if (started.length >= capacity) break;
       // 用户点击暂停后，立即停止本轮后续新派发；已启动的任务继续由各自执行实例收尾。
       if (board.snapshot().status !== 'ready') break;
+      const currentConfig = this.getConfig(sessionId);
+      if (!explicitTaskId && this.#automaticDispatchStopped.has(sessionId) && !currentConfig.bossDirect && !currentConfig.autopilot) break;
       if (occupiedMembers.has(task.memberId) || this.#activeExecutions.has(`${sessionId}:${task.id}`)) continue;
       const member = board.config.members.find(m => m.id === task.memberId);
       const overlaps = scheduledScopes.some(other => {
@@ -748,6 +755,8 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       this.#sessionBoss.set(sessionId, next.bossDirect);
       this.#sessionAutopilot.set(sessionId, next.autopilot);
       this.#sessionConfigs.set(sessionId, next);
+      if (next.bossDirect || next.autopilot) this.#automaticDispatchStopped.delete(sessionId);
+      else this.#automaticDispatchStopped.add(sessionId);
       this.#configRevision++;
       this.persistStore();
       if (next.autopilot && this.#boards.get(sessionId)?.snapshot().status === 'ready') await this.scheduleReadyTasks(sessionId, this.#sessionExecs.get(sessionId) || {});
@@ -758,6 +767,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       const normalized = new TeamBoard(params.config).config;
       const newConfig = new TeamBoard({ ...normalized, members: normalized.members.filter(m => !m.id.startsWith('task-route-')) }).config;
       const existing = this.#boards.get(sessionId);
+      const wasAutomatic = this.getConfig(sessionId).bossDirect || this.getConfig(sessionId).autopilot;
       const shared = value => ({ ...value, bossDirect: false, autopilot: false, members: value.members.filter(m => !m.id.startsWith('task-route-')) });
       if (JSON.stringify(shared(newConfig)) === JSON.stringify(shared(this.getConfig(sessionId)))) return this.handleAction(sessionId, 'configureSession', { bossDirect: newConfig.bossDirect, autopilot: newConfig.autopilot, expectedConfigRevision: params.expectedConfigRevision });
       const candidates = new Map();
@@ -796,6 +806,8 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
         this.#sessionConfigs.set(id, candidate);
       }
       const sessionConfig = candidates.get(sessionId);
+      if (sessionConfig.bossDirect || sessionConfig.autopilot) this.#automaticDispatchStopped.delete(sessionId);
+      else if (wasAutomatic) this.#automaticDispatchStopped.add(sessionId);
       if (!existing && newConfig.enabled) {
         const board = new TeamBoard(sessionConfig, this.#sessionStates.get(sessionId), state => {
           this.#sessionStates.set(sessionId, state);

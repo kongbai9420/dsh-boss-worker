@@ -253,7 +253,7 @@ export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask
           return x === '**' || y === '**' || x === '.' || y === '.' || x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`);
         })));
       if (target?.status === 'pending' && !overlapsRunningScope) {
-        const started = await scheduleReadyTasks(sessionId, exec);
+        const started = await scheduleReadyTasks(sessionId, exec, args.taskId);
         if (started.includes(args.taskId)) {
           return { taskId: args.taskId, status: 'running', summary: '已加入安全并行调度队列' };
         }

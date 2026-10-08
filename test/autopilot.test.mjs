@@ -203,7 +203,8 @@ test('turning autopilot off revokes prior authorization and restores confirmPlan
   assert.equal(f.ctx.requests.length, 1);
   assert.throws(() => f.board.start('second'), err => err.code === 'APPROVAL_REQUIRED');
   await f.service.handleAction(f.id, 'approve', {});
-  assert.deepEqual(await f.service.scheduleReadyTasks(f.id, f.exec), ['second']);
+  assert.deepEqual(await f.service.scheduleReadyTasks(f.id, f.exec), [], 'approval alone does not reenable automatic dispatch after both switches are off');
+   assert.deepEqual(await f.service.scheduleReadyTasks(f.id, f.exec, 'second'), ['second']);
   await complete(f, 1);
   await f.service.handleAction(f.id, 'review', { taskId: 'second', passed: true, feedback: 'Mock checked' });
   assert.equal(batchNotices(f.parent).length, 0, 'disabled autopilot must not issue an all-done autopilot wakeup');
