@@ -230,6 +230,12 @@ export class LeadWorkerHostService extends Service {
 - 无论单任务还是多任务均强制派发：即使是用户只提出的单个简单任务或小需求，主模型也必须使用 lead_worker_plan 建立任务并分配给子模型，通过 lead_worker_dispatch 派发给子模型执行代码；待子模型执行完毕交付后，主模型再严格核实其改动与测试结果，调用 lead_worker_review 把关验收，严禁自己直接写代码实现。
 ` : '';
           return `
+# 验收收敛与避免重复检查
+- 子任务执行期间由成员自测；交付进入 review 后，主控独立核验并调用 lead_worker_review。通过即结束该次验收；仅返工后的新产出需要再次验收。
+- 主控验收不默认另建子任务检查该子任务，更不建立逐层审计链；必要时可委派一次范围明确的独立技术验证，主控仍负责最终决定。
+- 同一文件版本、相同范围、相同验证命令已有有效通过证据时必须复用；不得仅换任务标题重复检查。
+- 新建检查任务的 instructions 必须写明【新增核验理由】：具体变更文件/版本、新失败或证据缺口，以及已有验收为何无法覆盖；仅检查增量。
+- 真实测试失败、证据缺失、材料或授权不足时，汇总阻断及最小下一步；不能不断追加全面审计来制造进展。总目标达成则总结结束，不默认再建最终审计。
 # BOSS直派协同模式 (Lead-Worker Mode)
 ${isBossDirect ? '当前会话已激活 BOSS 直派协作模式。' : '当前会话未开启BOSS直派或托管，主模型可直接处理请求；协作工具可按需使用。'}
 ${bossDirectRules}
@@ -523,7 +529,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       `1. 当前出现了阶段性状态变化，请主控重新评估当前可执行工作；`,
       review.length > 0 ? `2. 现有 ${review.length} 项任务处于待审查阶段，请及时调用 lead_worker_review 验收；` : '',
       needsAttention.length > 0 ? `3. 现有 ${needsAttention.length} 项任务需人工关注，请核查现场并根据需要处理；` : '',
-      board.config.autopilot ? `4. 全自动托管授权有效：对照用户项目总目标继续规划并推进下一阶段，无需逐步审批；不得扩大到目标外项目，不跳过主控审查或真实集成测试。批次全部完成不等于项目已完成。` : `4. ⚠️ 边界铁律：系统绝不自动扩大工作范围，绝不自动执行未获批准的任务！若需新任务或调整范围，必须使用 lead_worker_plan 提交规划并经用户明确批准。`
+      board.config.autopilot ? `4. 全自动托管授权有效：先复用已通过的同版本证据核对用户总目标。只有明确未完成的目标才规划下一阶段，无需逐步审批；目标完成则总结结束。缺少授权、材料或测试失败则报告具体阻断，不得用重复审计代替解决。不得扩大目标，不得跳过必要验收。` : `4. ⚠️ 边界铁律：系统绝不自动扩大工作范围，绝不自动执行未获批准的任务！若需新任务或调整范围，必须使用 lead_worker_plan 提交规划并经用户明确批准。`
     ].filter(Boolean).join('\n');
 
     const message = createUserMessage({
@@ -628,7 +634,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       snapshot = board.snapshot();
     }
     if (board.config.autopilot && snapshot.tasks.length && snapshot.tasks.every(t => t.status === 'done')) {
-      await this.notifyPhaseReview(sessionId, { type: 'batch_settled', payload: { tasks: snapshot.tasks.map(t => [t.id, t.executionEpoch]) }, description: '本批全部通过主控审查，请对照项目总目标继续规划下一阶段或执行最终集成验收；不得仅凭批次完成宣布项目完成。' });
+      await this.notifyPhaseReview(sessionId, { type: 'batch_settled', payload: { tasks: snapshot.tasks.map(t => [t.id, t.executionEpoch]) }, description: '本批全部通过主控审查：先复用已有验收证据核对总目标；仅对明确未完成目标继续实施，不默认追加审计。存在阻断则报告缺口和所需授权；目标已达成则总结结束。' });
     }
     const running = snapshot.tasks.filter(t => t.status === 'running');
     const runningCount = running.length;
@@ -1252,13 +1258,8 @@ ${task.result ? `【上次保留结果】: ${JSON.stringify(task.result)}` : ''}
         this.ctx.logger?.warn?.(`向主控会话投递审查通知失败 (非阻塞): ${notifyErr.message}`);
       }
 
-      this.notifyPhaseReview(sessionId, {
-        type: 'task_completed',
-        taskId: task.id,
-        epoch,
-        status: 'review',
-        description: `任务 [${task.title}] 执行完毕进入审查阶段`
-      }).catch(() => {});
+      // Completion already has a task-specific review notice; do not wake the
+      // parent a second time with a generic next-phase planning instruction.
 
       return { taskId, status: 'review', summary: outputText.slice(0, 300) };
     } catch (err) {
