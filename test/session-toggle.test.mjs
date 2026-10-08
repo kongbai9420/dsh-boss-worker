@@ -36,4 +36,8 @@ test('session autopilot ignores unrelated orphan historical member without delet
   stored = JSON.parse(readFileSync(file, 'utf8'));
   assert.deepEqual(stored.shared, config);
   assert.equal(stored.boards['test-session-1'].tasks[0].memberId, 'removed-test');
+  await host.handleAction('real-session', 'configure', { config: { ...host.getConfig('real-session'), members: [{ ...member, model: 'new-model' }] } });
+  stored = JSON.parse(readFileSync(file, 'utf8'));
+  assert.equal(stored.shared.members[0].model, 'new-model');
+  assert.equal(stored.boards['test-session-1'].tasks[0].memberId, 'removed-test');
 });

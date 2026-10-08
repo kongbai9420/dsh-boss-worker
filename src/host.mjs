@@ -768,8 +768,15 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
         const board = this.#boards.get(id);
         const state = board?.snapshot() || this.#sessionStates.get(id);
         const members = [...newConfig.members, ...(this.#sessionRoutes.get(id) || [])];
+        const previousMembers = board?.config.members || this.getConfig(id).members;
+        let legacyOrphan = false;
         for (const task of [...(state?.tasks || []), ...(state?.archivedTasks || [])]) {
-          if (task.memberId && !members.some(m => m.id === task.memberId)) throw new Error(`会话 ${id} 的任务 ${task.id} 仍引用成员 ${task.memberId}，不能删除共享成员`);
+          if (task.memberId && !members.some(m => m.id === task.memberId)) {
+            if (previousMembers.some(m => m.id === task.memberId)) throw new Error(`会话 ${id} 的任务 ${task.id} 仍引用成员 ${task.memberId}，不能删除共享成员`);
+            // Already missing before this save, not a deletion by this user.
+            // Preserve the snapshot; do not invent a model to restore it.
+            legacyOrphan = true;
+          }
         }
         // Preserve the original running member even when its shared model changes.
         const activeIds = new Set((state?.tasks || []).filter(t => t.status === 'running').map(t => t.memberId));
@@ -777,7 +784,8 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
         const merged = members.map(m => activeIds.has(m.id) ? (oldMembers.find(old => old.id === m.id) || m) : m);
         const candidate = { ...newConfig, members: merged, bossDirect: id === sessionId ? newConfig.bossDirect : this.#sessionBoss.get(id) ?? false, autopilot: id === sessionId ? newConfig.autopilot : this.#sessionAutopilot.get(id) ?? false };
         // Detached validation cannot quarantine or otherwise change the live board.
-        if (state) new TeamBoard(candidate, state);
+        if (state && !legacyOrphan) new TeamBoard(candidate, state);
+        if (legacyOrphan) this.ctx.logger.warn(`会话 ${id} 含历史失效成员引用，保留原始任务快照；不阻止无关共享设置更新`);
         candidates.set(id, candidate);
       }
       this.#sessionBoss.set(sessionId, newConfig.bossDirect === true);
