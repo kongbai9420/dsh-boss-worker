@@ -778,6 +778,12 @@ window.__ModuleLoader__.load({
       return React.createElement(React.Fragment, null, ball, card);
     }
 
+    function teamSettingsConfig(config) {
+      const copy = JSON.parse(JSON.stringify(config));
+      copy.members = (copy.members || []).filter(member => !member.id.startsWith('task-route-'));
+      return copy;
+    }
+
     function LeadWorkerDialog({ sessionId, isOpen, onClose, themeMode, toggleTheme, monitor, floatingVisible = true, toggleFloating }) {
       const [tab, setTab] = React.useState('board'); // 'board' | 'lead' | 'members'
       const [viewData, setViewData] = React.useState(null);
@@ -799,8 +805,8 @@ window.__ModuleLoader__.load({
           const data = await res.json();
           if (data.ok) {
             setViewData(data);
-            if (!draftBaseConfig.current) draftBaseConfig.current = JSON.parse(JSON.stringify(data.config));
-            setConfigDraft(prev => prev ?? { ...JSON.parse(JSON.stringify(data.config)), bossDirect: isBossDirectActive(data.config) });
+            if (!draftBaseConfig.current) draftBaseConfig.current = teamSettingsConfig(data.config);
+            setConfigDraft(prev => prev ?? { ...teamSettingsConfig(data.config), bossDirect: isBossDirectActive(data.config) });
           }
         } catch (err) {
           setErrorMsg(err.message);
@@ -833,8 +839,8 @@ window.__ModuleLoader__.load({
         setViewData(monitor.sessionId === sessionId ? monitor.data : null);
         setErrorMsg(monitor.error || '');
         if (monitor.sessionId === sessionId && monitor.data?.config) {
-          if (!draftBaseConfig.current) draftBaseConfig.current = JSON.parse(JSON.stringify(monitor.data.config));
-          setConfigDraft(prev => prev ? { ...prev, bossDirect: isBossDirectActive(monitor.data.config), autopilot: autopilotDraftEdited.current ? prev.autopilot : monitor.data.config.autopilot === true } : { ...JSON.parse(JSON.stringify(monitor.data.config)), bossDirect: isBossDirectActive(monitor.data.config) });
+          if (!draftBaseConfig.current) draftBaseConfig.current = teamSettingsConfig(monitor.data.config);
+          setConfigDraft(prev => prev ? { ...prev, bossDirect: isBossDirectActive(monitor.data.config), autopilot: autopilotDraftEdited.current ? prev.autopilot : monitor.data.config.autopilot === true } : { ...teamSettingsConfig(monitor.data.config), bossDirect: isBossDirectActive(monitor.data.config) });
         }
       }, [sessionId, isOpen, monitor]);
 
@@ -892,8 +898,8 @@ window.__ModuleLoader__.load({
           if (action === 'configure') {
             autopilotDraftEdited.current = false;
             const returnedConfig = result.result?.config || params.config;
-            draftBaseConfig.current = JSON.parse(JSON.stringify(returnedConfig));
-            setConfigDraft(JSON.parse(JSON.stringify({ ...returnedConfig, bossDirect: params.config?.bossDirect ?? returnedConfig.bossDirect })));
+            draftBaseConfig.current = teamSettingsConfig(returnedConfig);
+            setConfigDraft(teamSettingsConfig({ ...returnedConfig, bossDirect: params.config?.bossDirect ?? returnedConfig.bossDirect }));
             setSaveNotice('设置已保存，BOSS直派与任务规则已即时生效');
             setTimeout(() => setSaveNotice(''), 3000);
           }

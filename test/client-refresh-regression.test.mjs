@@ -87,10 +87,13 @@ test('same-session Dialog close/reopen discards baseline and edited autopilot, r
   h.states[7].current = true;
   h.render(h.api.LeadWorkerDialog, { ...props, isOpen: false });
   assert.equal(h.states[2], null); assert.equal(h.states[7].current, false); assert.equal(h.states[8].current, null);
-  const latest = view({ leadPrompt: 'external update', autopilot: false, members: [] });
+  const latest = view({ leadPrompt: 'external update', autopilot: false, members: [{ id: 'worker-copy', name: 'formal' }, { id: 'task-route-A-old', name: 'internal' }] });
   h.render(h.api.LeadWorkerDialog, { ...props, monitor: { sessionId: 'A', data: latest } });
   assert.equal(h.states[2].leadPrompt, 'external update'); assert.equal(h.states[2].autopilot, false);
   assert.equal(h.states[8].current.leadPrompt, 'external update');
+  assert.deepEqual(Array.from(h.states[2].members, m => m.id), ['worker-copy']);
+  assert.deepEqual(Array.from(h.states[8].current.members, m => m.id), ['worker-copy']);
+  assert.equal(latest.config.members.length, 2, 'task view retains internal route without mutation');
   assert.equal(h.api.viewStreams.get('A').queuedRefresh, true, 'reopen refresh queues behind old GET');
   h.respond(0, old); await h.flush(); assert.equal(h.requests.length, 2);
   h.respond(1, latest); await h.flush();
