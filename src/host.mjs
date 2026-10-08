@@ -213,7 +213,10 @@ export class LeadWorkerHostService extends Service {
           const board = this.#boards.get(sessionId);
           const config = this.getConfig(sessionId);
           if (!config || !config.enabled) return '';
-          const effectiveLeadPrompt = config.autopilot ? (config.leadPrompt || '').replace('严格遵守用户批准门禁，不得绕过审批。', '当前会话已授权全自动托管，常规项目规划与推进无需逐项批准；保留宿主安全限制和返工上限。') : config.leadPrompt;
+          const coordinationActive = config.bossDirect === true || config.autopilot === true;
+          const configuredPrompt = (config.leadPrompt || '').replace(/【👑 BOSS直派规则】:[^\n]*\n?/g, '').trim();
+          const leadPrompt = !coordinationActive && configuredPrompt === DEFAULT_TEAM_CONFIG.leadPrompt ? '' : configuredPrompt;
+          const effectiveLeadPrompt = config.autopilot ? leadPrompt.replace('严格遵守用户批准门禁，不得绕过审批。', '当前会话已授权全自动托管，常规项目规划与推进无需逐项批准；保留宿主安全限制和返工上限。') : leadPrompt;
           const customLeadPrompt = effectiveLeadPrompt ? `\n【主控定制准则】:\n${effectiveLeadPrompt}\n` : '';
           const askApproval = !config.autopilot && config.askApprovalPrompt !== false;
           const availability = teamAvailability(this.#sharedConfig || config, board?.snapshot());
@@ -226,7 +229,7 @@ export class LeadWorkerHostService extends Service {
 ` : '';
           return `
 # BOSS直派协同模式 (Lead-Worker Mode)
-当前会话已激活 BOSS 直派协作模式。
+${isBossDirect ? '当前会话已激活 BOSS 直派协作模式。' : '当前会话未开启BOSS直派或托管，主模型可直接处理请求；协作工具可按需使用。'}
 ${bossDirectRules}
 ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话项目的常规规划与执行，无需逐步提问批准。主控持续规划、派发、严格审查并推进依赖和下一批工作；批次结束不等于项目完成，必须核对原始目标并安排集成测试，只有实际验收全部通过才汇报完成。子模型报告不能直接视为通过。不得绕过宿主权限、安全确认、返工上限、写入范围和真实阻塞；遇到缺失凭据或无法解决的故障明确报告。暂停和停工仍由用户控制。' : ''}
 【动态角色与容量】${JSON.stringify(availability)}

@@ -60,7 +60,7 @@ test('BOSS target flips latest config rather than the old rendered value', async
   const result = h.api.toggleBossDirectQuick('A', { bossDirect: false }, value => { success = value; }, err => { throw err; });
   h.respond(0, view({ bossDirect: true, leadPrompt: '【👑 BOSS直派规则】: old\nkeep latest', members: [] })); await h.flush();
   const payload = JSON.parse(h.requests[1].options.body);
-  assert.equal(payload.config.bossDirect, false); assert.equal(payload.config.leadPrompt, 'keep latest'); assert.equal(payload.expectedConfigRevision, 'r-latest');
+  assert.equal(payload.action, 'configureSession'); assert.equal(payload.bossDirect, false); assert.equal(payload.config, undefined); assert.equal(payload.expectedConfigRevision, 'r-latest');
   h.respond(1, { ok: true }); await result; assert.equal(success, false);
 });
 

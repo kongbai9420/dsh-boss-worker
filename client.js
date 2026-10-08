@@ -323,7 +323,7 @@ window.__ModuleLoader__.load({
         let res = await fetch('/api/lead-worker/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, action: 'configure', config: nextConfig, expectedConfigRevision: latest.configRevision }),
+          body: JSON.stringify({ sessionId, action: 'configureSession', bossDirect: nextBossDirect, expectedConfigRevision: latest.configRevision }),
         });
         let result = await res.json();
         if (!result.ok && result.error && result.error.includes('unknown field bossDirect')) {
