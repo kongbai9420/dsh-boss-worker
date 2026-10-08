@@ -716,11 +716,26 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
   }
 
   async handleAction(sessionId, action, params) {
+    if (action === 'configureSession') {
+      if (params.expectedConfigRevision !== undefined && params.expectedConfigRevision !== this.#configRevision) throw new Error('配置已被其他入口更新，请刷新后重试');
+      const current = this.getConfig(sessionId);
+      const next = new TeamBoard({ ...current, ...Object.fromEntries(['autopilot', 'bossDirect'].filter(key => Object.hasOwn(params, key)).map(key => [key, params[key]])) }).config;
+      this.#boards.get(sessionId)?.reconfigure(next);
+      this.#sessionBoss.set(sessionId, next.bossDirect);
+      this.#sessionAutopilot.set(sessionId, next.autopilot);
+      this.#sessionConfigs.set(sessionId, next);
+      this.#configRevision++;
+      this.persistStore();
+      if (next.autopilot && this.#boards.get(sessionId)?.snapshot().status === 'ready') await this.scheduleReadyTasks(sessionId, this.#sessionExecs.get(sessionId) || {});
+      return { config: next, configRevision: this.#configRevision };
+    }
     if (action === 'configure') {
       if (params.expectedConfigRevision !== undefined && params.expectedConfigRevision !== this.#configRevision) throw new Error('配置已被其他入口更新，请刷新后重试；未覆盖最新配置');
       const normalized = new TeamBoard(params.config).config;
       const newConfig = new TeamBoard({ ...normalized, members: normalized.members.filter(m => !m.id.startsWith('task-route-')) }).config;
       const existing = this.#boards.get(sessionId);
+      const shared = value => ({ ...value, bossDirect: false, autopilot: false, members: value.members.filter(m => !m.id.startsWith('task-route-')) });
+      if (JSON.stringify(shared(newConfig)) === JSON.stringify(shared(this.getConfig(sessionId)))) return this.handleAction(sessionId, 'configureSession', { bossDirect: newConfig.bossDirect, autopilot: newConfig.autopilot, expectedConfigRevision: params.expectedConfigRevision });
       const candidates = new Map();
       const sessionIds = new Set([sessionId, ...this.#sessionConfigs.keys(), ...this.#boards.keys(), ...this.#sessionStates.keys()]);
       // Validate every session before changing any config or board. A shared member

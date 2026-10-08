@@ -2078,7 +2078,7 @@ window.__ModuleLoader__.load({
             if (!latest.ok) throw new Error(latest.error || '无法读取最新配置');
             const nextAutopilot = latest.config.autopilot !== true;
             const nextConfig = { ...latest.config, autopilot: nextAutopilot };
-            const res = await fetch('/api/lead-worker/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, action: 'configure', config: nextConfig, expectedConfigRevision: latest.configRevision }) });
+            const res = await fetch('/api/lead-worker/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, action: 'configureSession', autopilot: nextAutopilot, expectedConfigRevision: latest.configRevision }) });
             const result = await res.json();
             if (!result.ok) throw new Error(result.error || '切换失败');
             setMonitor(prev => prev?.sessionId === sessionId ? { ...prev, data: { ...prev.data, config: result.result?.config || nextConfig } } : prev);

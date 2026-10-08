@@ -71,9 +71,9 @@ test('autopilot click flips latest config and optimistic fallback preserves late
   const clicked = button.props.onClick({ preventDefault() {}, stopPropagation() {} });
   h.respond(1, view({ autopilot: true, leadPrompt: 'latest' })); await h.flush();
   const payload = JSON.parse(h.requests[2].options.body);
-  assert.equal(payload.config.autopilot, false); assert.equal(payload.config.leadPrompt, 'latest');
+  assert.equal(payload.action, 'configureSession'); assert.equal(payload.autopilot, false); assert.equal(payload.config, undefined);
   h.respond(2, { ok: true }); await clicked;
-  h.respond(3, view(payload.config)); await h.flush();
+  h.respond(3, view({ autopilot: false, leadPrompt: 'latest' })); await h.flush();
   assert.equal(h.states[0].data.config.autopilot, false); assert.equal(h.states[0].data.config.leadPrompt, 'latest');
 });
 
