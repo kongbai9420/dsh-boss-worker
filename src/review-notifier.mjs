@@ -10,10 +10,15 @@ catch (err) {
 const notifiedReviews = new Set();
 // 投递并发重入锁表
 const inFlightReviews = new Set();
+const noticeStates = new Map();
+export function getReviewNoticeStates(sessionId) {
+  return [...noticeStates.values()].filter(s => s.sessionId === sessionId).map(s => ({ ...s }));
+}
 
 export function clearNotifiedReviews() {
   notifiedReviews.clear();
   inFlightReviews.clear();
+  noticeStates.clear();
 }
 
 export function getNotifiedReviews() {
@@ -47,7 +52,11 @@ export async function notifyParentReview({
   outputText = '',
   member = null,
   parentAgentOverride = null,
-  childId = null
+  childId = null,
+  reminder = false,
+  now = Date.now(),
+  cooldownMs = 180000,
+  maxReminders = 2
 }) {
   if (!board) {
     return { delivered: false, reason: 'NO_BOARD' };
@@ -80,8 +89,12 @@ export async function notifyParentReview({
   const resolvedChildId = childId || task.evidence?.dispatch?.childId || null;
   const notifyKey = buildNotifyKey({ sessionId, batchId, taskId, epoch, childId: resolvedChildId });
 
-  if (notifiedReviews.has(notifyKey) || inFlightReviews.has(notifyKey)) {
-    return { delivered: false, reason: 'ALREADY_NOTIFIED' };
+  const prior = noticeStates.get(notifyKey);
+  if (inFlightReviews.has(notifyKey)) return { delivered: false, reason: 'IN_FLIGHT' };
+  if (notifiedReviews.has(notifyKey) && !reminder) return { delivered: false, reason: 'ALREADY_NOTIFIED' };
+  if (reminder && prior) {
+    if (now - prior.lastAttemptAt < cooldownMs) return { delivered: false, reason: 'COOLDOWN' };
+    if (prior.attempts >= 1 + maxReminders) return { delivered: false, reason: 'REMINDER_LIMIT' };
   }
 
   // 4. 获取父 Agent 实例（支持宿主 ctx.agents 与测试传入的 override）
@@ -90,6 +103,8 @@ export async function notifyParentReview({
     ctx?.logger?.warn?.(`[review-notifier] 未找到父 Agent 实例 (sessionId=${sessionId})，审查通知暂无法在线投递`);
     return { delivered: false, reason: 'NO_PARENT_AGENT' };
   }
+
+  if (reminder && parent.status !== 'idle') return { delivered: false, reason: 'PARENT_BUSY' };
 
   // 宿主公开 API 校验：只用已验证的 followup API，不支持时明确返回，不猜测 fallback
   if (typeof parent.followup !== 'function') {
@@ -140,12 +155,16 @@ export async function notifyParentReview({
 
   // 6. 投递给父 Agent（防重入加锁，投递失败即撤销，成功才最终保留）
   inFlightReviews.add(notifyKey);
+  const notice = { sessionId, taskId, epoch, attempts: (prior?.attempts || 0) + 1, lastAttemptAt: now, delivered: false, reason: 'DELIVERING' };
+  noticeStates.set(notifyKey, notice);
   try {
-    parent.followup(message);
+    await parent.followup(message);
     notifiedReviews.add(notifyKey);
+    Object.assign(notice, { delivered: true, reason: 'DELIVERED' });
     ctx?.logger?.info?.(`[review-notifier] 成功向父 Agent 投递审查通知 (session=${sessionId}, batch=${batchId}, task=${taskId}, epoch=${epoch}, parentStatus=${parent.status})`);
     return { delivered: true, method: 'followup', parentStatus: parent.status };
   } catch (err) {
+    Object.assign(notice, { delivered: false, reason: 'DELIVERY_EXCEPTION', error: err.message });
     ctx?.logger?.error?.(`[review-notifier] 向父 Agent 投递审查通知异常: ${err.message}`);
     return { delivered: false, reason: 'DELIVERY_EXCEPTION', error: err.message };
   } finally {

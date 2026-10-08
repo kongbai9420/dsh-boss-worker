@@ -19,7 +19,7 @@ import { createLeadWorkerTools } from './tools.mjs';
 import { evaluateQualityGate } from './quality-gates.mjs';
 import { normalizeEvidence } from './contracts.mjs';
 import { bossGuardReason, requireParent } from './boss-policy.mjs';
-import { notifyParentReview } from './review-notifier.mjs';
+import { notifyParentReview, getReviewNoticeStates } from './review-notifier.mjs';
 import { validateApiRequest } from './api-security.mjs';
 
 let createUserMessage;
@@ -159,6 +159,13 @@ export class LeadWorkerHostService extends Service {
       if (err.code !== 'ENOENT') ctx.logger.warn(`读取协作设置失败: ${err.message}`);
     }
 
+    // Bounded idle-only reminders; never approve or rerun business tasks.
+    if (!isolatedTestRuntime && typeof ctx.on === 'function') {
+      const timer = setInterval(() => this.remindPendingReviews().catch(err => ctx.logger.warn(`审查补提醒失败: ${err.message}`)), 60000);
+      timer.unref?.();
+      ctx.on('dispose', () => clearInterval(timer));
+    }
+
     // 1. 注册主控端工具
     // tools.guard 是真正作用于主模型工具执行面的全局单调门禁；仅包裹 subagents.start
     // 无法拦截主模型通过原生 subagent 工具发起的调用。
@@ -285,6 +292,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
                   liveParentAvailable: Boolean(this.ctx.get('agents')?.get(sessionId)),
                   activeExecutions: [...this.#activeExecutions.values()].filter(item => item.sessionId === sessionId).length,
                   recoveryAudits: this.getRecoveryAudits(sessionId),
+                  reviewNotices: getReviewNoticeStates(sessionId),
                 },
                 enabled: config.enabled,
                 config,
@@ -353,6 +361,19 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
 
   getRecoveryAudits(sessionId) {
     return this.#recoveryAudits.get(sessionId) || [];
+  }
+
+  async remindPendingReviews() {
+    for (const [sessionId, board] of this.#boards) {
+      if (board.snapshot().status !== 'ready') continue;
+      const parent = this.ctx.get('agents')?.get(sessionId);
+      if (parent?.status !== 'idle') continue;
+      for (const task of board.snapshot().tasks.filter(t => t.status === 'review')) {
+        await notifyParentReview({ ctx: this.ctx, sessionId, taskId: task.id, epoch: task.executionEpoch, board,
+          outputText: task.result?.output || '', reportedFiles: task.result?.files || [],
+          parentAgentOverride: parent, reminder: true });
+      }
+    }
   }
 
   async auditAndNotifyRecoveredReviews(sessionId, board) {
