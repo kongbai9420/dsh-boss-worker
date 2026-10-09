@@ -190,6 +190,8 @@ export class TeamBoard {
     for (const task of this.#state.tasks.filter(t => !['done', 'cancelled', 'failed'].includes(t.status))) {
       if (task.memberId === null) continue;
       const member = next.members.find(m => m.id === task.memberId && m.enabled);
+      const alreadyUnavailable = !this.#config.members.some(m => m.id === task.memberId && m.enabled);
+      if (!member && alreadyUnavailable) continue;
       assert(member, 'INVALID_MEMBER', `任务 ${task.id} 的成员仍在使用中，不能删除或禁用`);
       assert(!member.readOnly || task.writeScopes.length === 0, 'READ_ONLY', `任务 ${task.id} 需要写入权限`);
     }
@@ -239,17 +241,30 @@ export class TeamBoard {
     };
     return scopesA.some(x => scopesB.some(y => overlaps(x, y)));
   }
-  #validateTasks(tasks) {
+  #validateTasks(tasks, restoring = false) {
     const ids = new Map(tasks.map((t) => [t.id, t]));
     assert(ids.size === tasks.length, 'INVALID_INPUT', 'task IDs must be unique');
     for (const task of tasks) {
-      if (task.memberId !== null) this.#member(task.memberId);
-      if (task.memberId !== null && !task.readOnly && !this.#member(task.memberId).readOnly) {
+      const unavailable = restoring && task.memberId !== null && !this.#config.members.some(m => m.id === task.memberId && m.enabled);
+      if (unavailable) {
+        // Historical identity is evidence, not a license to invent a new model.
+        // Keep accepted history intact; quarantine unfinished work for explicit repair.
+        if (!['done', 'cancelled', 'failed'].includes(task.status)) {
+          if (task.status === 'running') task.executionEpoch++;
+          if (task.status !== 'pending') {
+            task.status = 'needs_attention';
+            task.phase = STATUS_TO_PHASE_MAP.needs_attention;
+          }
+          if (task.waitingReason !== 'RETRY_LIMIT_REACHED') task.waitingReason = 'MEMBER_UNAVAILABLE';
+        }
+      }
+      if (task.memberId !== null && !unavailable) this.#member(task.memberId);
+      if (task.memberId !== null && !unavailable && !task.readOnly && !this.#member(task.memberId).readOnly) {
         assert(task.writeScopes.length > 0, 'MISSING_WRITE_SCOPE', `可写任务 ${task.id} 必须声明精确的 writeScopes`);
       }
       // retries records historical attempts; lowering maxRetries must not invalidate saved tasks.
       // Future retry permission remains enforced by review/retry transitions.
-      if (task.memberId !== null) this.#assignment(task, task.memberId);
+      if (task.memberId !== null && !unavailable) this.#assignment(task, task.memberId);
       for (const dep of task.dependencies) assert(ids.has(dep), 'INVALID_DEPENDENCY', `missing dependency: ${dep}`);
     }
     // Iterative topological traversal avoids a recursion limit on long DAGs.
@@ -292,7 +307,11 @@ export class TeamBoard {
       state.archivedTasks = Array.from(input.archivedTasks, (t) => normalizeTask(t, true));
     }
     state.tasks = Array.from(input.tasks, (t) => normalizeTask(t, true));
-    this.#validateTasks(state.tasks);
+    this.#validateTasks(state.tasks, true);
+    if (state.tasks.some(t => t.memberId !== null && !this.#config.members.some(m => m.id === t.memberId && m.enabled) && !['done', 'cancelled', 'failed'].includes(t.status))) {
+      state.approved = false;
+      state.status = 'paused';
+    }
     assert(state.status !== 'draft' || (state.tasks.length === 0 && !state.approved), 'INVALID_INPUT', 'draft state must be empty and unapproved');
     assert(state.status === 'draft' || state.status === 'cancelled' || state.tasks.length > 0, 'INVALID_INPUT', 'active board must contain tasks');
     const running = state.tasks.filter((t) => t.status === 'running');

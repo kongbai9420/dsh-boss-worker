@@ -853,12 +853,16 @@ window.__ModuleLoader__.load({
             const latestResponse = await fetch(`/api/lead-worker/view?sessionId=${encodeURIComponent(sessionId)}`);
             const latest = await latestResponse.json();
             if (!latest.ok) throw new Error(latest.error || '无法核对最新开关状态');
-            const merged = { ...latest.config };
-            const baseline = draftBaseConfig.current || latest.config;
-            for (const [key, value] of Object.entries(params.config)) {
+            // Compare settings in the same formal-member projection; task routes belong
+            // to the session view and are preserved by the host, not edited here.
+            const latestSettings = teamSettingsConfig(latest.config);
+            const merged = { ...latestSettings };
+            const baseline = teamSettingsConfig(draftBaseConfig.current || latestSettings);
+            const submitted = teamSettingsConfig(params.config);
+            for (const [key, value] of Object.entries(submitted)) {
               if (key === 'bossDirect' || key === 'autopilot') continue;
               if (JSON.stringify(value) !== JSON.stringify(baseline[key])) {
-                if (JSON.stringify(latest.config[key]) !== JSON.stringify(baseline[key])) throw new Error(`配置项 ${key} 已被其他入口更新，请重新打开设置后编辑`);
+                if (JSON.stringify(latestSettings[key]) !== JSON.stringify(baseline[key])) throw new Error(`配置项 ${key} 已被其他入口更新，请重新打开设置后编辑`);
                 merged[key] = value;
               }
             }

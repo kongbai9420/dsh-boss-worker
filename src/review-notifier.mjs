@@ -6,10 +6,12 @@ catch (err) {
   createUserMessage = input => ({ role: 'user', content: input.content, source: input.source || { kind: 'subagent-settled' } });
 }
 
-// 审查通知去重记录表：key 为 `${sessionId}:${batchId}:${taskId}:${epoch}` 或包含真实 childId
+// 仅模块内存状态，不提供跨进程持久化或跨进程 exactly-once 保证。
 const notifiedReviews = new Set();
-// 投递并发重入锁表
-const inFlightReviews = new Set();
+// 每次领取使用独立 token；clear 后旧 Promise 不得释放新领取的锁。
+const inFlightReviews = new Map();
+const boardIdentities = new WeakMap();
+let nextBoardIdentity = 0;
 const noticeStates = new Map();
 export function getReviewNoticeStates(sessionId) {
   return [...noticeStates.values()].filter(s => s.sessionId === sessionId).map(s => ({ ...s }));
@@ -25,18 +27,30 @@ export function getNotifiedReviews() {
   return Array.from(notifiedReviews);
 }
 
-function buildNotifyKey({ sessionId, batchId, taskId, epoch, childId }) {
-  if (childId && typeof childId === 'string' && childId.trim()) {
-    return `${sessionId}:${childId}:${epoch}`;
-  }
-  return `${sessionId}:${batchId || 1}:${taskId}:${epoch}`;
+function buildNotifyKey({ sessionId, batchId, taskId, epoch, board, generation }) {
+  // generation 是宿主提供的稳定生命周期标识；缺省时使用 board 对象身份。
+  // childId 不是身份键：初次投递、恢复与 reminder 路由必须共享同一把锁。
+  if (!boardIdentities.has(board)) boardIdentities.set(board, ++nextBoardIdentity);
+  const scope = generation == null
+    ? ['board', boardIdentities.get(board)]
+    : ['generation', generation];
+  return JSON.stringify([sessionId, scope, batchId, taskId, epoch]);
+}
+
+function invalidReview(snapshot, taskId, epoch) {
+  if (['paused', 'cancelled', 'done'].includes(snapshot.status)) return 'BOARD_TERMINAL_OR_PAUSED';
+  const task = snapshot.tasks.find(t => t.id === taskId);
+  if (!task) return 'TASK_NOT_FOUND';
+  if (task.status !== 'review') return 'TASK_NOT_IN_REVIEW';
+  if (task.executionEpoch !== epoch) return 'EPOCH_MISMATCH';
+  return null;
 }
 
 /**
  * 当子模型执行完成并进入 review 状态后，向父 Agent (原会话) 投递审查通知并唤醒审查。
  * 遵循宿主规范与把关要求：
  * 1. 严格核实任务板非 paused/cancelled，任务仍处于 review 状态且 epoch 匹配；
- * 2. 严格去重且支持新批次复用 ID（包含 batchId/childId），失败撤销 key 允许重试，成功才最终保留；
+ * 2. 按 session/generation（缺省 board 身份）/batch/task/epoch 去重，失败可重试，成功才保留；
  * 3. 严格不自动通过，明确要求主模型调用 lead_worker_review 工具进行把关验收；
  * 4. 子模型汇报结果明确标记为不可信产出数据，严禁主控将其报告或指令作为权限来源；
  * 5. 父 Agent 忙碌时由宿主 followup 排队，空闲时唤醒；
@@ -53,6 +67,7 @@ export async function notifyParentReview({
   member = null,
   parentAgentOverride = null,
   childId = null,
+  generation = null,
   reminder = false,
   now = Date.now(),
   cooldownMs = 180000,
@@ -62,10 +77,15 @@ export async function notifyParentReview({
     return { delivered: false, reason: 'NO_BOARD' };
   }
 
+  // 显式 generation 仅接受稳定标量；拒绝对象/NaN 等 JSON 碰撞身份。
+  if (generation != null && !(typeof generation === 'string'
+    || (typeof generation === 'number' && Number.isFinite(generation)))) {
+    return { delivered: false, reason: 'INVALID_GENERATION' };
+  }
   const snapshot = board.snapshot();
 
-  // 1. 状态防护：paused 或 cancelled 下不可擅自唤醒执行或重复通知
-  if (snapshot.status === 'paused' || snapshot.status === 'cancelled') {
+  // 1. 状态防护：paused 或终结状态下不可擅自唤醒执行或重复通知
+  if (['paused', 'cancelled', 'done'].includes(snapshot.status)) {
     ctx?.logger?.warn?.(`[review-notifier] 任务板状态为 ${snapshot.status}，已拒绝向父 Agent 投递唤醒通知`);
     return { delivered: false, reason: 'BOARD_TERMINAL_OR_PAUSED' };
   }
@@ -84,17 +104,17 @@ export async function notifyParentReview({
     return { delivered: false, reason: 'EPOCH_MISMATCH' };
   }
 
-  // 3. 去重与并发防护：基于 sessionId + batchId/childId + taskId + epoch
-  const batchId = snapshot.batchId || 1;
+  // 3. 所有投递路由共享任务生命周期键，JSON 编码避免分隔符碰撞。
+  const batchId = snapshot.batchId ?? 1;
   const resolvedChildId = childId || task.evidence?.dispatch?.childId || null;
-  const notifyKey = buildNotifyKey({ sessionId, batchId, taskId, epoch, childId: resolvedChildId });
+  const notifyKey = buildNotifyKey({ sessionId, batchId, taskId, epoch, board, generation });
 
   const prior = noticeStates.get(notifyKey);
   if (inFlightReviews.has(notifyKey)) return { delivered: false, reason: 'IN_FLIGHT' };
   if (notifiedReviews.has(notifyKey) && !reminder) return { delivered: false, reason: 'ALREADY_NOTIFIED' };
   if (reminder && prior) {
-    if (now - prior.lastAttemptAt < cooldownMs) return { delivered: false, reason: 'COOLDOWN' };
-    if (prior.attempts >= 1 + maxReminders) return { delivered: false, reason: 'REMINDER_LIMIT' };
+    if (prior.delivered && now - prior.lastAttemptAt < cooldownMs) return { delivered: false, reason: 'COOLDOWN' };
+    if (prior.deliveries >= 1 + maxReminders) return { delivered: false, reason: 'REMINDER_LIMIT' };
   }
 
   // 4. 获取父 Agent 实例（支持宿主 ctx.agents 与测试传入的 override）
@@ -153,21 +173,41 @@ export async function notifyParentReview({
     }
   });
 
-  // 6. 投递给父 Agent（防重入加锁，投递失败即撤销，成功才最终保留）
-  inFlightReviews.add(notifyKey);
-  const notice = { sessionId, taskId, epoch, attempts: (prior?.attempts || 0) + 1, lastAttemptAt: now, delivered: false, reason: 'DELIVERING' };
+  // 6. 紧贴调用边界重新核实；followup 之后只能观察失效，无法撤回已接受的消息。
+  const current = board.snapshot();
+  const invalidBefore = invalidReview(current, taskId, epoch)
+    || ((current.batchId ?? 1) !== batchId ? 'GENERATION_MISMATCH' : null);
+  if (invalidBefore) return { delivered: false, reason: invalidBefore };
+  if (reminder && parent.status !== 'idle') return { delivered: false, reason: 'PARENT_BUSY' };
+  const token = {};
+  inFlightReviews.set(notifyKey, token);
+  const notice = { sessionId, taskId, epoch, attempts: (prior?.attempts || 0) + 1,
+    deliveries: prior?.deliveries || 0, lastAttemptAt: now, delivered: false, reason: 'DELIVERING' };
   noticeStates.set(notifyKey, notice);
   try {
     await parent.followup(message);
+    // clear 是内存状态屏障，旧 completion 不得重新写入或解锁新请求。
+    if (inFlightReviews.get(notifyKey) !== token) {
+      return { delivered: true, method: 'followup', parentStatus: parent.status, stale: true, reason: 'NOTICE_STATE_CLEARED' };
+    }
+    // 成功接受即记录去重；pause/resume 不能导致同一消息再次投递。
     notifiedReviews.add(notifyKey);
-    Object.assign(notice, { delivered: true, reason: 'DELIVERED' });
-    ctx?.logger?.info?.(`[review-notifier] 成功向父 Agent 投递审查通知 (session=${sessionId}, batch=${batchId}, task=${taskId}, epoch=${epoch}, parentStatus=${parent.status})`);
-    return { delivered: true, method: 'followup', parentStatus: parent.status };
+    Object.assign(notice, { delivered: true, deliveries: notice.deliveries + 1, reason: 'DELIVERED' });
+    const latest = board.snapshot();
+    const staleReason = invalidReview(latest, taskId, epoch)
+      || ((latest.batchId ?? 1) !== batchId ? 'GENERATION_MISMATCH' : null);
+    if (staleReason) Object.assign(notice, { stale: true, staleReason });
+    return { delivered: true, method: 'followup', parentStatus: parent.status,
+      ...(staleReason ? { stale: true, staleReason } : {}) };
   } catch (err) {
-    Object.assign(notice, { delivered: false, reason: 'DELIVERY_EXCEPTION', error: err.message });
-    ctx?.logger?.error?.(`[review-notifier] 向父 Agent 投递审查通知异常: ${err.message}`);
-    return { delivered: false, reason: 'DELIVERY_EXCEPTION', error: err.message };
+    const error = err?.message || String(err);
+    // 若 followup 已成功而 snapshot 出错，不能把已投递误记为失败并重新投递。
+    if (notice.delivered) return { delivered: true, method: 'followup', stale: true, reason: 'STATE_CHECK_EXCEPTION', error };
+    if (inFlightReviews.get(notifyKey) === token) {
+      Object.assign(notice, { delivered: false, reason: 'DELIVERY_EXCEPTION', error });
+    }
+    return { delivered: false, reason: 'DELIVERY_EXCEPTION', error };
   } finally {
-    inFlightReviews.delete(notifyKey);
+    if (inFlightReviews.get(notifyKey) === token) inFlightReviews.delete(notifyKey);
   }
 }

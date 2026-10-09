@@ -39,5 +39,15 @@ test('session autopilot ignores unrelated orphan historical member without delet
   await host.handleAction('real-session', 'configure', { config: { ...host.getConfig('real-session'), members: [{ ...member, model: 'new-model' }] } });
   stored = JSON.parse(readFileSync(file, 'utf8'));
   assert.equal(stored.shared.members[0].model, 'new-model');
+  const orphan = host.getOrCreateBoard('test-session-1');
+  assert.equal(orphan.snapshot().tasks[0].memberId, 'removed-test');
+  assert.equal(orphan.snapshot().tasks[0].waitingReason, 'MEMBER_UNAVAILABLE');
+  assert.equal(orphan.snapshot().status, 'paused');
+  await host.handleAction('real-session', 'configure', { config: { ...host.getConfig('real-session'), maxParallel: 3 } });
+  assert.equal(host.getConfig('real-session').maxParallel, 3, 'loaded orphan must not cause partial configuration failure');
+  await host.handleAction('test-session-1', 'configureSession', { bossDirect: false, autopilot: false });
+  orphan.assign('old', 'real', 'user');
+  assert.equal(orphan.snapshot().tasks[0].memberId, 'real');
+  assert.equal(orphan.snapshot().approved, false);
   assert.equal(stored.boards['test-session-1'].tasks[0].memberId, 'removed-test');
 });

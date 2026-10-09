@@ -76,7 +76,12 @@ test('shared configure preserves original running member while applying updated 
   await host.handleAction('B', 'configure', { config: { ...config, members: [{ ...worker, model: 'new' }] } });
   assert.equal(a.snapshot().tasks[0].status, 'running');
   assert.equal(a.config.members[0].model, 'old');
-  assert.equal(host.getConfig('A').members[0].model, 'old');
+  await host.handleAction('A', 'configureSession', { bossDirect: false });
+  assert.equal(a.config.members[0].model, 'old', 'session toggle must not rewrite the running snapshot');
+  assert.equal(host.getConfig('A').members[0].model, 'new', 'settings describe future runs, not the current execution snapshot');
+  a.finish('t', { output: 'mock completed' }); a.review('t', true, 'mock verified');
+  await host.handleAction('A', 'configure', { config: { ...host.getConfig('A'), maxParallel: 3 } });
+  assert.equal(a.config.members[0].model, 'new');
   assert.equal(host.getConfig('B').members[0].model, 'new');
 });
 

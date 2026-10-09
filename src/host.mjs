@@ -108,6 +108,15 @@ export class LeadWorkerHostService extends Service {
   #sessionExecs = new Map();
   #recoveryAudits = new Map();
   #notifiedPhaseReviews = new Set();
+  #inFlightPhaseReviews = new Set();
+  #disposed = false;
+  #boardGenerations = new WeakMap();
+  #nextBoardGeneration = 0;
+
+  coordinationActive(sessionId) {
+    const config = this.getConfig(sessionId);
+    return !this.#disposed && config.enabled && (config.bossDirect === true || config.autopilot === true);
+  }
 
   constructor(ctx, config) {
     super(ctx, 'leadWorker');
@@ -162,10 +171,11 @@ export class LeadWorkerHostService extends Service {
     }
 
     // Bounded idle-only reminders; never approve or rerun business tasks.
+    if (typeof ctx.on === 'function') ctx.on('dispose', () => { this.#disposed = true; });
     if (!isolatedTestRuntime && typeof ctx.on === 'function') {
       const timer = setInterval(() => this.remindPendingReviews().catch(err => ctx.logger.warn(`审查补提醒失败: ${err.message}`)), 60000);
       timer.unref?.();
-      ctx.on('dispose', () => clearInterval(timer));
+      ctx.on('dispose', () => { this.#disposed = true; clearInterval(timer); });
     }
 
     // 1. 注册主控端工具
@@ -175,12 +185,6 @@ export class LeadWorkerHostService extends Service {
       if (!tools?.guard) return;
       tools.guard((exec) => {
         const sessionId = exec?.agent?.session?.header?.id;
-        if (sessionId && this.#automaticDispatchStopped.has(sessionId)) {
-          const config = this.getConfig(sessionId);
-          const header = exec.agent?.session?.header;
-          const name = String(exec.name || '').split('.').pop();
-          if (!config.bossDirect && !config.autopilot && !header?.parentSession && header?.origin !== 'subagent' && ['subagent', 'subagent_fork', 'workflow', 'lead_worker_plan', 'lead_worker_dispatch'].includes(name)) return '当前会话已关闭BOSS直派和托管，请主模型直接处理任务，不要新建或派发子模型任务。';
-        }
         return sessionId ? bossGuardReason(exec, this.getConfig(sessionId)) : undefined;
       });
     });
@@ -203,7 +207,7 @@ export class LeadWorkerHostService extends Service {
         getMemberCatalog: (sessionId) => this.getConfig(sessionId).members,
         dispatchTask: (sessionId, taskId, exec) => this.dispatchTask(sessionId, taskId, exec),
         scheduleReadyTasks: (sessionId, exec, explicitTaskId) => this.scheduleReadyTasks(sessionId, exec, explicitTaskId),
-        isDelegationDisabled: sessionId => this.#automaticDispatchStopped.has(sessionId) && !this.getConfig(sessionId).bossDirect && !this.getConfig(sessionId).autopilot,
+        isDelegationDisabled: sessionId => !this.coordinationActive(sessionId),
         askUserQuestion: async (questions, exec) => toolsCtx.userQuestions.ask({ questions, agent: exec.agent, signal: exec.signal })
       });
       for (const tool of tools) {
@@ -222,7 +226,7 @@ export class LeadWorkerHostService extends Service {
           const board = this.#boards.get(sessionId);
           const config = this.getConfig(sessionId);
           if (!config || !config.enabled) return '';
-          if (this.#automaticDispatchStopped.has(sessionId) && !config.bossDirect && !config.autopilot) return '当前会话已关闭BOSS直派与全自动托管。使用主模型直接处理用户请求，不调用子智能体或新建团队任务，不询问团队计划批准。只可对已有子任务收尾结果进行必要验收；需要恢复团队委派时由用户重新开启模式。';
+          if (!this.coordinationActive(sessionId)) return '';
           const coordinationActive = config.bossDirect === true || config.autopilot === true;
           const configuredPrompt = (config.leadPrompt || '').replace(/【👑 BOSS直派规则】:[^\n]*\n?/g, '').trim();
           const leadPrompt = !coordinationActive && configuredPrompt === DEFAULT_TEAM_CONFIG.leadPrompt ? '' : configuredPrompt;
@@ -247,7 +251,7 @@ export class LeadWorkerHostService extends Service {
 # BOSS直派协同模式 (Lead-Worker Mode)
 ${isBossDirect ? '当前会话已激活 BOSS 直派协作模式。' : '当前会话未开启BOSS直派或托管，主模型可直接处理请求；协作工具可按需使用。'}
 ${bossDirectRules}
-${config.autopilot ? '【全自动托管已开启】用户已授权当前会话项目的常规规划与执行，无需逐步提问批准。主控持续规划、派发、严格审查并推进依赖和下一批工作；批次结束不等于项目完成，必须核对原始目标并安排集成测试，只有实际验收全部通过才汇报完成。子模型报告不能直接视为通过。不得绕过宿主权限、安全确认、返工上限、写入范围和真实阻塞；遇到缺失凭据或无法解决的故障明确报告。暂停和停工仍由用户控制。' : ''}
+${config.autopilot ? '【全自动托管已开启】用户已授权当前会话项目的常规规划与执行，无需逐步提问批准。主控持续规划、派发、严格审查并推进依赖和下一批工作；批次结束先复用已有证据核对原始目标；仅在明确集成覆盖缺口时安排增量验证，目标实际达成则总结结束，不默认新增全面审计。子模型报告不能直接视为通过。不得绕过宿主权限、安全确认、返工上限、写入范围和真实阻塞；遇到缺失凭据或无法解决的故障明确报告。暂停和停工仍由用户控制。' : ''}
 【动态角色与容量】${JSON.stringify(availability)}
 - 每次规划、追加需求、成员变更后以及派发前，必须调用 lead_worker_list_members 获取最新角色，不沿用旧角色数量；根据职责、模型、读写权限和忙闲合理分工。
 - 可用并发取 maxParallel、适合的空闲角色数、依赖已满足且范围不冲突的任务数的最小值。优先把独立任务分配给不同角色；相同模型的副本也是独立成员，不把工作全堆给第一个成员。
@@ -361,12 +365,11 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
   }
 
   getConfig(sessionId) {
-    if (!this.#sessionConfigs.has(sessionId)) {
-      const base = this.#sharedConfig || this.config.defaultConfig || DEFAULT_TEAM_CONFIG;
-      const members = [...base.members.filter(m => !m.id.startsWith('task-route-')), ...(this.#sessionRoutes.get(sessionId) || [])];
-      this.#sessionConfigs.set(sessionId, { ...JSON.parse(JSON.stringify({ ...base, members })), bossDirect: this.#sessionBoss.get(sessionId) ?? false, autopilot: this.#sessionAutopilot.get(sessionId) ?? false });
-    }
-    return this.#sessionConfigs.get(sessionId);
+    // Settings always describe future executions. Running model snapshots belong
+    // to the board/execution, never to the shared settings source of truth.
+    const base = this.#sharedConfig || this.config.defaultConfig || DEFAULT_TEAM_CONFIG;
+    const members = [...base.members.filter(m => !m.id.startsWith('task-route-')), ...(this.#sessionRoutes.get(sessionId) || [])];
+    return { ...JSON.parse(JSON.stringify({ ...base, members })), bossDirect: this.#sessionBoss.get(sessionId) ?? false, autopilot: this.#sessionAutopilot.get(sessionId) ?? false };
   }
 
   recordRecoveryAudit(sessionId, record) {
@@ -385,10 +388,11 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
 
   async remindPendingReviews() {
     for (const [sessionId, board] of this.#boards) {
-      if (board.snapshot().status !== 'ready') continue;
+      if (!this.coordinationActive(sessionId) || board.snapshot().status !== 'ready') continue;
       const parent = this.ctx.get('agents')?.get(sessionId);
       if (parent?.status !== 'idle') continue;
       for (const task of board.snapshot().tasks.filter(t => t.status === 'review')) {
+        if (!this.coordinationActive(sessionId)) break;
         await notifyParentReview({ ctx: this.ctx, sessionId, taskId: task.id, epoch: task.executionEpoch, board,
           outputText: task.result?.output || '', reportedFiles: task.result?.files || [],
           parentAgentOverride: parent, reminder: true });
@@ -397,19 +401,20 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
   }
 
   async auditAndNotifyRecoveredReviews(sessionId, board) {
-    if (!board) return [];
+    if (!board || !this.coordinationActive(sessionId)) return [];
     const snap = board.snapshot();
     const reviewTasks = (snap.tasks || []).filter(t => t.status === 'review');
     const records = [];
-    const proxyBoard = { snapshot: () => ({ ...snap, status: 'ready' }) };
+    // Use live state: paused/cancelled and changed attempts must remain guarded.
     for (const rTask of reviewTasks) {
+      if (!this.coordinationActive(sessionId)) break;
       try {
         const result = await notifyParentReview({
           ctx: this.ctx,
           sessionId,
           taskId: rTask.id,
           epoch: rTask.executionEpoch,
-          board: proxyBoard,
+          board,
           reportedFiles: rTask.result?.files || rTask.evidence?.files || [],
           outputText: rTask.result?.output || rTask.result?.summary || '',
           member: board.config.members.find(m => m.id === rTask.memberId),
@@ -482,6 +487,8 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
   async notifyPhaseReview(sessionId, event = {}) {
     const board = this.#boards.get(sessionId);
     if (!board) return { delivered: false, reason: 'NO_BOARD' };
+    const config = this.getConfig(sessionId);
+    if (!this.coordinationActive(sessionId)) return { delivered: false, reason: 'MODE_OFF' };
     const snap = board.snapshot();
     if (snap.status !== 'ready' && event.type === 'batch_settled') return { delivered: false, reason: 'BOARD_NOT_READY' };
     const batchId = snap.batchId || 1;
@@ -509,7 +516,9 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       dedupeKey = `${sessionId}:${batchId}:${eventType}:${JSON.stringify(event.payload || {})}`;
     }
 
-    if (this.#notifiedPhaseReviews.has(dedupeKey)) {
+    if (!this.#boardGenerations.has(board)) this.#boardGenerations.set(board, ++this.#nextBoardGeneration);
+    dedupeKey = `${this.#boardGenerations.get(board)}:${dedupeKey}`;
+    if (this.#notifiedPhaseReviews.has(dedupeKey) || this.#inFlightPhaseReviews.has(dedupeKey)) {
       return { delivered: false, reason: 'ALREADY_NOTIFIED', dedupeKey };
     }
 
@@ -550,6 +559,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       }
     });
 
+    this.#inFlightPhaseReviews.add(dedupeKey);
     try {
       await parent.followup(message);
       this.#notifiedPhaseReviews.add(dedupeKey);
@@ -558,6 +568,8 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
     } catch (err) {
       this.ctx.logger.warn(`投递阶段性复评通知失败: ${err.message}`);
       return { delivered: false, reason: 'FOLLOWUP_ERROR', error: err.message };
+    } finally {
+      this.#inFlightPhaseReviews.delete(dedupeKey);
     }
   }
 
@@ -603,7 +615,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
 
   async scheduleReadyTasks(sessionId, exec, explicitTaskId = null) {
     const latestConfig = this.getConfig(sessionId);
-    if (this.#automaticDispatchStopped.has(sessionId) && !latestConfig.bossDirect && !latestConfig.autopilot) return [];
+    if (!latestConfig.enabled || (!explicitTaskId && !this.coordinationActive(sessionId))) return [];
     const liveAgent = this.ctx.get('agents')?.get(sessionId);
     const parent = requireParent(sessionId, liveAgent ? { agent: liveAgent } : exec, this.ctx.get('agents'));
     // Do not retain a tool call's abort signal for background work or future resume.
@@ -660,7 +672,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       // 用户点击暂停后，立即停止本轮后续新派发；已启动的任务继续由各自执行实例收尾。
       if (board.snapshot().status !== 'ready') break;
       const currentConfig = this.getConfig(sessionId);
-      if (!explicitTaskId && this.#automaticDispatchStopped.has(sessionId) && !currentConfig.bossDirect && !currentConfig.autopilot) break;
+      if (!currentConfig.enabled || (!explicitTaskId && !this.coordinationActive(sessionId))) break;
       if (occupiedMembers.has(task.memberId) || this.#activeExecutions.has(`${sessionId}:${task.id}`)) continue;
       const member = board.config.members.find(m => m.id === task.memberId);
       const overlaps = scheduledScopes.some(other => {
@@ -765,7 +777,12 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       if (params.expectedConfigRevision !== undefined && params.expectedConfigRevision !== this.#configRevision) throw new Error('配置已被其他入口更新，请刷新后重试');
       const current = this.getConfig(sessionId);
       const next = new TeamBoard({ ...current, ...Object.fromEntries(['autopilot', 'bossDirect'].filter(key => Object.hasOwn(params, key)).map(key => [key, params[key]])) }).config;
-      this.#boards.get(sessionId)?.reconfigure(next);
+      const liveBoard = this.#boards.get(sessionId);
+      if (liveBoard) {
+        const activeIds = new Set(liveBoard.snapshot().tasks.filter(t => t.status === 'running').map(t => t.memberId));
+        const executionMembers = liveBoard.config.members;
+        liveBoard.reconfigure({ ...next, members: next.members.map(m => activeIds.has(m.id) ? executionMembers.find(old => old.id === m.id) || m : m) });
+      }
       this.#sessionBoss.set(sessionId, next.bossDirect);
       this.#sessionAutopilot.set(sessionId, next.autopilot);
       this.#sessionConfigs.set(sessionId, next);
@@ -795,6 +812,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
         const previousMembers = board?.config.members || this.getConfig(id).members;
         let legacyOrphan = false;
         for (const task of [...(state?.tasks || []), ...(state?.archivedTasks || [])]) {
+          if (task.memberId && previousMembers.some(m => m.id === task.memberId && m.enabled) && members.some(m => m.id === task.memberId && !m.enabled) && !['done', 'cancelled', 'failed'].includes(task.status)) throw new Error(`任务 ${task.id} 的成员仍在使用中，不能删除或禁用`);
           if (task.memberId && !members.some(m => m.id === task.memberId)) {
             if (previousMembers.some(m => m.id === task.memberId)) throw new Error(`会话 ${id} 的任务 ${task.id} 仍引用成员 ${task.memberId}，不能删除共享成员`);
             // Already missing before this save, not a deletion by this user.
@@ -834,7 +852,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
       if (newConfig.autopilot && this.#boards.get(sessionId)?.snapshot().status === 'ready') {
         await this.scheduleReadyTasks(sessionId, this.#sessionExecs.get(sessionId) || {});
       }
-      return { config: sessionConfig, configRevision: this.#configRevision };
+      return { config: this.getConfig(sessionId), configRevision: this.#configRevision };
     }
 
     const board = this.getOrCreateBoard(sessionId);
@@ -1009,6 +1027,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
         const snap = board.snapshot();
         const reviewTasks = snap.tasks.filter(t => t.status === 'review');
         for (const rTask of reviewTasks) {
+          if (!this.coordinationActive(sessionId)) break;
           try {
             await notifyParentReview({
               ctx: this.ctx,
@@ -1250,7 +1269,7 @@ ${task.result ? `【上次保留结果】: ${JSON.stringify(task.result)}` : ''}
 
       // 子模型完成交付并进入 review 后，唤醒主控会话执行把关审查
       try {
-        await notifyParentReview({
+        if (this.coordinationActive(sessionId)) await notifyParentReview({
           ctx: this.ctx,
           sessionId,
           taskId,

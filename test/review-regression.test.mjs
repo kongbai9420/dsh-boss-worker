@@ -128,7 +128,7 @@ test('HTTP manual dispatch pumps authorized rework after review arrives before a
     },
   };
   service = new LeadWorkerHostService(ctx, {});
-  await service.handleAction(sessionId, 'configure', { config });
+  await service.handleAction(sessionId, 'configure', { config: { ...config, bossDirect: true } });
   await service.handleAction(sessionId, 'plan', { tasks: [task()] });
   await service.handleAction(sessionId, 'dispatchTask', { taskId: 'a', userTaskApproval: true });
   assert.equal(requests.length, 1);

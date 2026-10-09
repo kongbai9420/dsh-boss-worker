@@ -378,15 +378,11 @@ assert.equal(restoredBoard.snapshot().tasks.length, 2, '保持原有任务，不
 // 等待异步补投完成
 await new Promise(resolve => setTimeout(resolve, 50));
 // 验证补投 review 通知
-assert.ok(restartFollowups.length >= 1, '重启必须补投 review 通知');
-assert.match(restartFollowups[0].content[0].text, /task-rev-1/);
+assert.equal(restartFollowups.length, 0, 'paused recovery must not wake the parent before resume');
 
 // 验证 review 恢复审计可查
 const recoveryAudits = service.getRecoveryAudits(restartSessionId);
-assert.ok(recoveryAudits.length >= 1, '重启 review 恢复必须可审计');
-assert.equal(recoveryAudits[0].taskId, 'task-rev-1');
-assert.equal(recoveryAudits[0].epoch, 2);
-assert.equal(recoveryAudits[0].delivered, true);
+assert.equal(recoveryAudits.length, 0, 'off mode must not initiate recovery notifications');
 console.log('✓ Restart recovery: approved revoked, review notice caught up, audits verified');
 
 // ==========================================
@@ -417,9 +413,9 @@ assert.equal(restartFollowups.length, initialFollowupCount, '重复完成通知�
 await service.notifyPhaseReview(restartSessionId, { type: 'members_idle_or_blocked', idleMembers: [{ id: 'idle' }] });
 assert.equal(restartFollowups.length, initialFollowupCount, '没有可操作待办时，成员空闲不应刷屏');
 await service.notifyPhaseReview(restartSessionId, { type: 'state_change', payload: { reason: 'manual-check' } });
-assert.equal(restartFollowups.length, initialFollowupCount + 1, '有用的状态复评通知仍应发送');
+assert.equal(restartFollowups.length, initialFollowupCount, 'off mode suppresses state-change notifications');
 await service.notifyPhaseReview(restartSessionId, { type: 'state_change', payload: { reason: 'manual-check' } });
-assert.equal(restartFollowups.length, initialFollowupCount + 1, '有用的通知仍须去重');
+assert.equal(restartFollowups.length, initialFollowupCount, 'repeated off-mode notifications remain suppressed');
 console.log('✓ Phase review notifications sent and deduplicated successfully');
 
 // 验证不自动执行未批准范围
