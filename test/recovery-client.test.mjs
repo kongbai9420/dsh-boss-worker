@@ -36,7 +36,7 @@ function harness({ status = 'paused', tasks = [], recovery, themeMode = 'light' 
     __ModuleLoader__: { load: spec => { plugin = spec.factory(name => name === 'react' ? React : { slots: {} }); } },
     confirm: message => { confirmations.push(message); return confirmed; },
   };
-  vm.runInNewContext(source, {
+  vm.runInNewContext(source.replace('exports.apply = apply;', 'exports.testing = { LeadWorkerDialog }; exports.apply = apply;'), {
     window,
     localStorage: { getItem: () => null },
     fetch: async (url, options) => {
@@ -52,11 +52,9 @@ function harness({ status = 'paused', tasks = [], recovery, themeMode = 'light' 
     },
     setTimeout() {}, setInterval() {}, clearInterval() {},
   });
-  let Action;
-  plugin.apply({ slots: { inject: (_name, fn) => fn(), register: (spec, component) => { if (spec.name === 'conversation.session.header.actions') Action = component; } } });
-  cursor = 0;
-  const actionTree = Action({ sessionId: 'session-test' });
-  const Dialog = actionTree.children.find(node => typeof node?.type === 'function').type;
+  // The Action now opens the floating workspace instead of rendering a sibling
+  // dialog. Exercise the embedded dialog directly; keep all recovery checks.
+  const Dialog = plugin.testing.LeadWorkerDialog;
   states = ['board', data, data.config, false, '', '', {}];
   // Keep hooks local to each function-component instance, rather than appending
   // child hooks to the dialog's slots. Task identity survives order/epoch changes.
@@ -81,7 +79,7 @@ function harness({ status = 'paused', tasks = [], recovery, themeMode = 'light' 
   }
   function render() {
     cursor = 0;
-    return resolve(Dialog({ sessionId: 'session-test', isOpen: true, themeMode, onClose() {}, toggleTheme() {} }));
+    return resolve(Dialog({ sessionId: 'session-test', isOpen: true, embedded: true, initialTab: 'board', themeMode, onClose() {}, toggleTheme() {} }));
   }
   function nodes(tree = render()) {
     const result = [];

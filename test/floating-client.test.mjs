@@ -88,7 +88,7 @@ test('read-only monitor renders counts, members, reasons, histories, honest stal
     assert.equal(progress.props['aria-valuemax'], 6);
     assert.equal(progress.props['aria-valuenow'], 1);
     assert.equal(progress.children[0].props.style.width, `${1 / 6 * 100}%`);
-    for (const label of ['成员甲', '暂无耗时数据', '返工次数：2', '等待依赖：dep', '成员忙碌', '写入范围冲突：other', '真实结果', '审查意见', '已核查续做', '同步失败', '旧快照，非实时', '上次更新时间', '打开完整面板']) assert.ok(value.includes(label), label);
+    for (const label of ['成员甲', '暂无耗时数据', '返工次数：2', '等待依赖：dep', '成员忙碌', '写入范围冲突：other', '真实结果', '审查意见', '已核查续做', '同步失败', '旧快照，非实时', '上次更新时间', '工作台设置']) assert.ok(value.includes(label), label);
     assert.doesNotMatch(value, /%|\[object Object\]/); assert.equal(nodes(tree).filter(n => ['input', 'textarea', 'select'].includes(n.type)).length, 0);
     const wrong = h.render(h.api.FloatingTaskMonitor, { ...props, sessionId: 'B' }); assert.doesNotMatch(text(wrong), /真实结果|任务done/);
     h.unmount(); assert.equal(h.listeners.get('window:resize').size, 0);
@@ -104,22 +104,75 @@ test('Action reuses shared stream for full panel and float, preferences persist 
   tree = h.render(h.api.LeadWorkerAction, props);
   assert.equal(nodes(tree).filter(n => n.type === h.api.FloatingTaskMonitor).length, 1);
   assert.ok([...h.timers.values()].some(timer => timer.ms === 10000));
-  const dialog = nodes(tree).find(n => n.type === h.api.LeadWorkerDialog);
-  assert.equal(dialog.props.floatingVisible, true);
-  dialog.props.toggleFloating(false);
+  assert.equal(nodes(tree).filter(n => n.type === h.api.LeadWorkerDialog).length, 0, 'Action does not render a standalone dialog');
+  let floating = nodes(tree).find(n => n.type === h.api.FloatingTaskMonitor);
+  assert.equal(floating.props.workspaceTab, 'tasks');
+  assert.equal(floating.props.prefs.collapsed, true);
+  floating.props.setPrefs(prev => ({ ...prev, visible: false }));
   tree = h.render(h.api.LeadWorkerAction, props);
   assert.equal(nodes(tree).filter(n => n.type === h.api.FloatingTaskMonitor).length, 0);
   assert.equal(JSON.parse(h.storage.get('dsh_lead_worker_floating_v1')).visible, false);
-  dialog.props.toggleFloating(true);
+  nodes(tree).find(n => n.type === 'button' && n.props.title === '打开统一协作工作台：任务、角色与设置').props.onClick();
   tree = h.render(h.api.LeadWorkerAction, props);
-  nodes(tree).find(n => n.type === 'button' && (n.props.title === 'BOSS直派与多模型分配设置' || n.props.title === '主从协作团队与多模型分配设置')).props.onClick();
-  tree = h.render(h.api.LeadWorkerAction, props);
+  floating = nodes(tree).find(n => n.type === h.api.FloatingTaskMonitor);
+  assert.equal(floating.props.workspaceTab, 'lead');
+  assert.equal(floating.props.prefs.visible, true);
+  assert.equal(floating.props.prefs.collapsed, false);
+  const saved = JSON.parse(h.storage.get('dsh_lead_worker_floating_v1'));
+  assert.equal(saved.visible, true); assert.equal(saved.collapsed, false);
+  assert.equal(nodes(tree).filter(n => n.type === h.api.LeadWorkerDialog).length, 0);
   assert.equal(h.requests.length, 1); assert.ok([...h.timers.values()].some(timer => timer.ms === 3000));
   const restore = h.newInstance(); h.render(h.api.LeadWorkerAction, props);
   const second = h.render(h.api.LeadWorkerAction, props);
   assert.equal(nodes(second).filter(n => n.type === h.api.FloatingTaskMonitor).length, 0);
   h.unmount(); restore(); h.unmount(); await h.flush();
   assert.equal(h.timers.size, 0);
+});
+
+test('workspace navigation embeds one shared dialog for roles and settings, then returns to tasks', () => {
+  const h = harness(); let workspaceTab = 'tasks';
+  let prefs = { x: 12, y: 20, collapsed: false, visible: true };
+  const monitor = { sessionId: 'A', data: data([{ id: 'task', status: 'running' }]) };
+  const props = { sessionId: 'A', monitor, themeMode: 'light', toggleTheme() {},
+    setWorkspaceTab: tab => { workspaceTab = tab; },
+    setPrefs: update => { prefs = typeof update === 'function' ? update(prefs) : update; } };
+  const render = () => h.render(h.api.FloatingTaskMonitor, { ...props, prefs, workspaceTab });
+  let tree = render();
+  const nav = nodes(tree).find(n => n.type === 'nav' && n.props['aria-label'] === '工作台区域');
+  assert.deepEqual(nav.children.map(text), ['任务', '角色', '设置']);
+  assert.deepEqual(nav.children.map(n => n.props['aria-pressed']), [true, false, false]);
+  const dialogWrapper = tree => nodes(tree).find(n => n.children?.some(child => child?.type === h.api.LeadWorkerDialog));
+  const initialDialog = nodes(tree).find(n => n.type === h.api.LeadWorkerDialog);
+  assert.ok(initialDialog, 'dialog remains mounted to preserve drafts on task tab');
+  assert.equal(dialogWrapper(tree).props.style.display, 'none');
+  for (const [tab, label] of [['members', '角色'], ['lead', '设置']]) {
+    nodes(tree).find(n => n.type === 'button' && text(n) === label).props.onClick();
+    assert.equal(workspaceTab, tab); tree = render();
+    const dialogs = nodes(tree).filter(n => n.type === h.api.LeadWorkerDialog);
+    assert.equal(dialogs.length, 1);
+    const dialog = dialogs[0];
+    assert.equal(dialog.props.key, initialDialog.props.key, 'navigation keeps dialog identity');
+    assert.equal(dialogWrapper(tree).props.style.display, 'flex');
+    assert.equal(dialog.props.embedded, true); assert.equal(dialog.props.isOpen, true);
+    assert.equal(dialog.props.initialTab, tab); assert.equal(dialog.props.sessionId, 'A');
+    assert.equal(dialog.props.monitor, monitor, 'embedded dialog reuses the monitor snapshot');
+    assert.equal(dialog.props.floatingVisible, true);
+    assert.equal(nodes(tree).filter(n => n.props['data-task-list']).length, 0);
+    assert.equal(nodes(tree).find(n => n.type === 'button' && text(n) === label).props['aria-pressed'], true);
+    dialog.props.onClose(); assert.equal(workspaceTab, 'tasks'); tree = render();
+    assert.equal(nodes(tree).filter(n => n.type === h.api.LeadWorkerDialog).length, 1);
+    assert.equal(dialogWrapper(tree).props.style.display, 'none');
+    assert.equal(nodes(tree).find(n => n.type === h.api.LeadWorkerDialog).props.key, initialDialog.props.key);
+    assert.equal(nodes(tree).filter(n => n.props['data-task-list']).length, 1);
+  }
+  nodes(tree).find(n => n.type === 'button' && text(n) === '工作台设置').props.onClick();
+  tree = render();
+  nodes(tree).find(n => n.type === h.api.LeadWorkerDialog).props.toggleFloating(false);
+  assert.equal(prefs.visible, false);
+  nodes(tree).find(n => n.type === 'button' && text(n) === '返回任务').props.onClick();
+  assert.equal(workspaceTab, 'tasks');
+  assert.equal(h.requests.length, 0, 'navigation does not create requests or backend writes');
+  h.unmount();
 });
 
 test('prefs migration defaults to ball, respects saved false, clamps tiny screens', () => {
@@ -140,7 +193,7 @@ test('prefs migration defaults to ball, respects saved false, clamps tiny screen
 
 test('persistent ball toggles twice and drags freely in both modes, suppressing click and selection', () => {
   const h = harness(); let prefs = { x: 12, y: 20, collapsed: true, visible: true }, opened = false;
-  const props = { sessionId: 'A', monitor: { sessionId: 'A', data: data([{ id: 't', status: 'running' }]) }, setPrefs: update => { prefs = typeof update === 'function' ? update(prefs) : update; }, themeMode: 'light', toggleTheme() {}, onOpen: () => { opened = true; } };
+  const props = { sessionId: 'A', monitor: { sessionId: 'A', data: data([{ id: 't', status: 'running' }]) }, setPrefs: update => { prefs = typeof update === 'function' ? update(prefs) : update; }, themeMode: 'light', toggleTheme() {}, setWorkspaceTab: tab => { opened = tab === 'lead'; } };
   const render = () => h.render(h.api.FloatingTaskMonitor, { ...props, prefs });
   let tree = render(); assert.equal(tree.type, 'fragment'); assert.match(ballNode(tree).props['aria-label'], /运行 1.*展开/);
   const ballKey = ballNode(tree).props.key;
@@ -152,7 +205,7 @@ test('persistent ball toggles twice and drags freely in both modes, suppressing 
   assert.equal(prefs.x, 12, 'exactly 5px is not a drag');
   h.emit('window:pointerup', { pointerId: 1 }); tree = render(); ballNode(tree).props.onClick({ detail: 1 });
   tree = render(); assert.equal(prefs.collapsed, false);
-  nodes(tree).find(n => text(n) === '打开完整面板' && n.type === 'button').props.onClick(); assert.equal(opened, true);
+  nodes(tree).find(n => text(n) === '工作台设置' && n.type === 'button').props.onClick(); assert.equal(opened, true);
   assert.equal(ballNode(tree).props.key, ballKey); assert.equal(ballNode(tree).props['aria-expanded'], true);
   assert.match(ballNode(tree).props['aria-label'], /点击收起/);
   assert.equal(nodes(tree).filter(n => n.type === 'button' && text(n) === '收起').length, 0);
@@ -321,7 +374,7 @@ test('card avoids the anchored ball on right, left and narrow screens, ball rema
     if (side === 'right') assert.ok(s.left >= ball.props.style.left + ball.props.style.width);
     if (side === 'left') assert.ok(s.left + s.width <= ball.props.style.left);
     if (side === 'vertical') assert.ok(s.top >= ball.props.style.top + 48 || s.top + s.height <= ball.props.style.top);
-    const heading = nodes(tree).find(n => text(n) === '协作进度');
+    const heading = nodes(tree).find(n => text(n) === '协作工作台');
     assert.ok(heading); assert.equal(heading.props.onPointerDown, undefined);
     h.unmount();
   }
@@ -468,11 +521,11 @@ test('floating monitor distinct three boxes for running, review, pending/needs_a
   assert.ok(drainWarning, 'drain warning alert is rendered when paused with running tasks');
   assert.match(text(drainWarning), /停工收尾中 \(draining\) \/ 未安全关机/);
 
-  // 7. 保持现有 BOSS 直派开关与对话入口不变
+  // 7. 不重复模型选择开关；设置入口切换到统一工作台
   const bossBtn = nodes(tree).find(n => n.props['aria-label'] === '悬浮卡片切换BOSS直派');
   assert.equal(bossBtn, undefined, 'floating card must not duplicate the model-selector switch');
-  const openBtn = nodes(tree).find(n => n.type === 'button' && text(n) === '打开完整面板');
-  assert.ok(openBtn, 'open full panel button remains');
+  const openBtn = nodes(tree).find(n => n.type === 'button' && text(n) === '工作台设置');
+  assert.ok(openBtn, 'workspace settings entry remains');
 
   h.unmount();
 });

@@ -361,7 +361,7 @@ window.__ModuleLoader__.load({
         onError?.(err);
       }
     }
-    function FloatingTaskMonitor({ sessionId, monitor, prefs, setPrefs, themeMode, toggleTheme, onOpen }) {
+    function FloatingTaskMonitor({ sessionId, monitor, prefs, setPrefs, themeMode, toggleTheme, onOpen, workspaceTab = 'tasks', setWorkspaceTab = () => {} }) {
       const [drag, setDrag] = React.useState(null);
       const [gesture] = React.useState(() => ({ suppressClick: false }));
       const [resize, setResize] = React.useState(null);
@@ -607,16 +607,20 @@ window.__ModuleLoader__.load({
       const card = !prefs.collapsed && React.createElement('section', { key: 'task-card', role: 'region', 'aria-label': '当前会话任务悬浮监控', 'data-floating-card': true, style: { position: 'fixed', zIndex: 9997, left: cardX, top: cardY, width: cardWidth, maxWidth: '100vw', height: cardHeight, maxHeight: '100vh', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflow: compact ? 'auto' : 'hidden', background: t.bgWindow, color: t.textPrimary, border: `1px solid ${t.borderCard}`, borderRadius: '18px', boxShadow: t.isDark ? '0 12px 36px rgba(0,0,0,0.30)' : '0 12px 36px rgba(25,35,55,0.12), 0 2px 6px rgba(25,35,55,0.04)', fontSize: '12px', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif', lineHeight: 1.6 } },
         React.createElement('header', { style: { padding: '16px 18px 12px', flexShrink: 0, borderBottom: `1px solid ${t.borderRow}` } },
           React.createElement('div', { style: { display: 'flex', gap: 6, alignItems: 'center' } },
-            React.createElement('strong', { style: { flex: 1, fontSize: 15, letterSpacing: '0.2px' } }, '协作进度'),
+            React.createElement('strong', { style: { flex: 1, fontSize: 15, letterSpacing: '0.2px' } }, '协作工作台'),
             button(t.isDark ? '浅色' : '深色', toggleTheme),
             button('隐藏', () => setPrefs(prev => ({ ...prev, visible: false })))
           ),
           React.createElement('div', { role: 'status', style: { marginTop: 5, color: current?.error ? (t.isDark ? '#e7bc82' : '#94622a') : t.textTertiary, fontSize: 10, overflowWrap: 'anywhere' } }, syncText)),
-        React.createElement('div', { 'data-monitor-summary': true, style: { padding: '12px 18px', flexShrink: 0 } },
+        workspaceTab !== 'tasks' && React.createElement('div', { style: { padding: '4px 14px', color: t.textTertiary, fontSize: 10 } }, '角色、并发与返工上限为共享设置；BOSS和托管仅影响当前会话。隐藏或收起前请保存修改。'),
+        React.createElement('nav', { 'aria-label': '工作台区域', style: { display: 'flex', gap: 6, padding: '8px 14px', flexShrink: 0 } },
+          ...[['tasks', '任务'], ['members', '角色'], ['lead', '设置']].map(([key, label]) => React.createElement('button', { key, type: 'button', 'aria-pressed': workspaceTab === key, onClick: () => setWorkspaceTab(key), style: { flex: 1, padding: '6px', cursor: 'pointer', borderRadius: 7, border: `1px solid ${t.borderCard}`, background: workspaceTab === key ? mutedSurface : 'transparent', color: t.textPrimary } }, label))),
+        React.createElement('div', { style: { display: workspaceTab === 'tasks' ? 'none' : 'flex', flex: workspaceTab === 'tasks' ? '0 0 0' : 1, minHeight: 0, overflow: 'hidden' } }, React.createElement(LeadWorkerDialog, { key: sessionId, sessionId, isOpen: true, embedded: true, initialTab: workspaceTab, themeMode, toggleTheme, monitor: current, onClose: () => setWorkspaceTab('tasks'), floatingVisible: true, toggleFloating: visible => setPrefs(prev => ({ ...prev, visible })) })),
+        workspaceTab === 'tasks' && React.createElement('div', { 'data-monitor-summary': true, style: { padding: '12px 18px', flexShrink: 0 } },
           React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 } }, React.createElement('strong', { style: { fontSize: 13 } }, data ? `已验收 ${counts.done}/${tasks.length}` : '任务数量：尚无数据'), React.createElement('span', { style: { fontSize: 10, color: t.textTertiary } }, '任务验收进度')),
           tasks.length > 0 && React.createElement('div', { role: 'progressbar', 'aria-label': '整体任务验收进度', 'aria-valuemin': 0, 'aria-valuemax': tasks.length || undefined, 'aria-valuenow': tasks.length ? counts.done : undefined, 'aria-valuetext': tasks.length ? `已验收 ${counts.done}/${tasks.length}` : data ? '暂无任务，无进度分母' : '尚无任务快照，无进度分母', style: { height: 5, borderRadius: 5, overflow: 'hidden', background: mutedSurface } }, React.createElement('div', { style: { width: `${tasks.length ? counts.done / tasks.length * 100 : 0}%`, height: '100%', background: accent, borderRadius: 5 } })),
          ),
-         React.createElement('div', { 'data-task-list': true, style: { flex: compact ? '0 0 auto' : 1, minHeight: compact ? undefined : 0, overflowY: compact ? 'visible' : 'auto', padding: '0 12px 12px', background: t.bgBody } },
+         workspaceTab === 'tasks' && React.createElement('div', { 'data-task-list': true, style: { flex: compact ? '0 0 auto' : 1, minHeight: compact ? undefined : 0, overflowY: compact ? 'visible' : 'auto', padding: '0 12px 12px', background: t.bgBody } },
           (!data || !tasks.length) && React.createElement('div', { 'data-empty-state': current?.error ? 'error' : !sessionId ? 'session' : !data ? 'loading' : 'empty', style: { textAlign: 'center', padding: '28px 16px', color: t.textTertiary } }, React.createElement('div', { 'aria-hidden': true, style: { width: 34, height: 34, margin: '0 auto 10px', borderRadius: 11, border: `1px solid ${t.borderCard}`, background: mutedSurface, display: 'grid', placeItems: 'center', fontSize: 16 } }, current?.error ? '!' : '≡'), React.createElement('strong', { style: { display: 'block', fontSize: 13, color: t.textPrimary, marginBottom: 4 } }, current?.error && !data ? '任务快照加载失败' : !sessionId ? '请选择当前会话' : !data ? '正在同步任务快照' : '当前会话暂无任务'), React.createElement('div', { style: { fontSize: 11 } }, current?.error ? '自动同步将重试；尚未获取的数据不会推断为已完成。' : !data ? '真实任务记录将在同步成功后显示。' : '主控规划任务后，协作进度会显示在这里。')),
           data && tasks.length > 0 && (() => {
             const runningTasks = tasks.filter(task => task.status === 'running');
@@ -783,7 +787,7 @@ window.__ModuleLoader__.load({
           })()),
         React.createElement('footer', { style: { flexShrink: 0, padding: '10px 14px 12px', borderTop: `1px solid ${t.borderRow}`, background: t.bgWindow } },
           React.createElement('div', { style: { color: t.textTertiary, fontSize: 10, marginBottom: 8 } }, `上次更新时间：${current?.updatedAt ? new Date(current.updatedAt).toLocaleTimeString() : '尚未成功同步'}`),
-          React.createElement('button', { type: 'button', onClick: onOpen, style: { width: '100%', padding: '9px 12px', borderRadius: 9, border: 'none', background: t.isDark ? '#ced9f5' : '#263c67', color: t.isDark ? '#1e273a' : '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' } }, '打开完整面板')),
+          React.createElement('button', { type: 'button', onClick: () => setWorkspaceTab(workspaceTab === 'tasks' ? 'lead' : 'tasks'), style: { width: '100%', padding: '9px 12px', borderRadius: 9, border: 'none', background: t.isDark ? '#ced9f5' : '#263c67', color: t.isDark ? '#1e273a' : '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' } }, workspaceTab === 'tasks' ? '工作台设置' : '返回任务')),
         // 四条边拉伸手柄
         React.createElement('div', { role: 'separator', 'aria-label': '顶部拉伸边', onPointerDown: e => startResize('n', e), style: { position: 'absolute', top: 0, left: 10, right: 10, height: 6, cursor: 'ns-resize', zIndex: 10, touchAction: 'none' } }),
         React.createElement('div', { role: 'separator', 'aria-label': '底部拉伸边', onPointerDown: e => startResize('s', e), style: { position: 'absolute', bottom: 0, left: 10, right: 10, height: 6, cursor: 'ns-resize', zIndex: 10, touchAction: 'none' } }),
@@ -803,8 +807,9 @@ window.__ModuleLoader__.load({
       return copy;
     }
 
-    function LeadWorkerDialog({ sessionId, isOpen, onClose, themeMode, toggleTheme, monitor, floatingVisible = true, toggleFloating }) {
-      const [tab, setTab] = React.useState('board'); // 'board' | 'lead' | 'members'
+    function LeadWorkerDialog({ sessionId, isOpen, onClose, themeMode, toggleTheme, monitor, floatingVisible = true, toggleFloating, embedded = false, initialTab = 'board' }) {
+      const [tab, setTab] = React.useState(initialTab); // 'board' | 'lead' | 'members'
+
       const [viewData, setViewData] = React.useState(null);
       const [configDraft, setConfigDraft] = React.useState(null);
       const [loading, setLoading] = React.useState(false);
@@ -934,6 +939,7 @@ window.__ModuleLoader__.load({
         }
       };
 
+      React.useEffect(() => { if (embedded) setTab(initialTab); }, [embedded, initialTab]);
       if (!isOpen) return null;
 
       const activeView = monitor ? (monitor.sessionId === sessionId ? monitor.data : null) : viewData;
@@ -948,15 +954,18 @@ window.__ModuleLoader__.load({
         'div',
         {
           style: {
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: t.bgOverlay,
+            position: embedded ? 'relative' : 'fixed',
+            inset: embedded ? undefined : 0,
+            flex: embedded ? 1 : undefined,
+            minHeight: 0,
+            overflow: 'hidden',
+            backgroundColor: embedded ? 'transparent' : t.bgOverlay,
             zIndex: 9999,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            backdropFilter: 'blur(16px)',
-            WebkitBackdropFilter: 'blur(16px)',
+            backdropFilter: embedded ? undefined : 'blur(16px)',
+            WebkitBackdropFilter: embedded ? undefined : 'blur(16px)',
           },
           onClick: onClose
         },
@@ -964,10 +973,10 @@ window.__ModuleLoader__.load({
           'div',
           {
             style: {
-              width: '860px',
-              maxWidth: '94vw',
-              height: '690px',
-              maxHeight: '90vh',
+              width: embedded ? '100%' : '860px',
+              maxWidth: embedded ? '100%' : '94vw',
+              height: embedded ? '100%' : '690px',
+              maxHeight: embedded ? '100%' : '90vh',
               backgroundColor: t.bgWindow,
               borderRadius: '16px',
               border: `1px solid ${t.borderWindow}`,
@@ -981,8 +990,8 @@ window.__ModuleLoader__.load({
             onClick: (e) => e.stopPropagation()
           },
 
-          // macOS TitleBar
-          React.createElement(
+          // Standalone fallback chrome is omitted inside the floating workspace.
+          !embedded && React.createElement(
             'div',
             {
               style: {
@@ -1082,8 +1091,8 @@ window.__ModuleLoader__.load({
                 gap: '12px',
               }
             },
-            // Segmented Tabs
-            React.createElement(
+            // Outer workspace owns navigation when embedded.
+            !embedded && React.createElement(
               'div',
               {
                 style: {
@@ -2011,7 +2020,7 @@ window.__ModuleLoader__.load({
     }
 
     function LeadWorkerAction({ sessionId }) {
-      const [isOpen, setIsOpen] = React.useState(false);
+      const [workspaceTab, setWorkspaceTab] = React.useState('tasks');
       const [monitor, setMonitor] = React.useState(null);
       const [themeMode, setThemeMode] = React.useState(getInitialTheme);
       const [prefs, setPrefs] = React.useState(floatingPreferences);
@@ -2043,7 +2052,7 @@ window.__ModuleLoader__.load({
         });
       };
 
-      React.useEffect(() => subscribeView(sessionId, isOpen || (prefs?.visible && !prefs.collapsed) ? 3000 : 10000, setMonitor), [sessionId, isOpen, prefs?.visible, prefs?.collapsed]);
+      React.useEffect(() => subscribeView(sessionId, prefs?.visible && !prefs.collapsed ? 3000 : 10000, setMonitor), [sessionId, prefs?.visible, prefs?.collapsed]);
 
       const t = THEMES[themeMode] || THEMES.light;
 
@@ -2070,22 +2079,12 @@ window.__ModuleLoader__.load({
               cursor: 'pointer',
               boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
             },
-            onClick: () => setIsOpen(true),
-            title: 'BOSS直派与多模型分配设置',
+            onClick: () => { setWorkspaceTab('lead'); updatePrefs(prev => constrainFloating({ ...prev, visible: true, collapsed: false })); },
+            title: '打开统一协作工作台：任务、角色与设置',
           },
           React.createElement('span', null, '👔 BOSS直派')
         ),
-        React.createElement(LeadWorkerDialog, {
-          sessionId,
-          isOpen,
-          onClose: () => setIsOpen(false),
-          themeMode,
-          toggleTheme,
-          monitor: currentMonitor,
-          floatingVisible: prefs?.visible !== false,
-          toggleFloating: visible => updatePrefs(prev => constrainFloating({ ...prev, visible })),
-        }),
-        prefs?.visible && floatingOwner && floatingPortal(React.createElement(FloatingTaskMonitor, { sessionId, monitor: currentMonitor, prefs, setPrefs: updatePrefs, themeMode, toggleTheme, onOpen: () => setIsOpen(true) }))
+        prefs?.visible && floatingOwner && floatingPortal(React.createElement(FloatingTaskMonitor, { sessionId, monitor: currentMonitor, prefs, setPrefs: updatePrefs, themeMode, toggleTheme, workspaceTab, setWorkspaceTab, onOpen: () => { setWorkspaceTab('lead'); updatePrefs(prev => ({ ...prev, visible: true, collapsed: false })); } }))
       );
     }
 
