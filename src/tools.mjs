@@ -295,7 +295,7 @@ export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask
       schema: { type: 'object', additionalProperties: true },
       render: (_args, value) => [{
         type: 'text',
-        text: (() => { const task = value.tasks?.find(t => t.id === _args.taskId); return task?.waitingReason === 'RETRY_LIMIT_REACHED' ? `任务 ${task.title} 已达到返工上限，正在请求用户决定是否继续。` : `审查完成。任务状态: ${task?.status}`; })()
+        text: (() => { const task = value.tasks?.find(t => t.id === _args.taskId); return task?.waitingReason === 'RETRY_LIMIT_REACHED' ? `任务 ${task.title} 已达到返工上限，正在请求用户决定是否继续。` : `审查完成。任务状态: ${task?.status}。${value.reworkBudget ? `本次审查后返工计数 ${value.reworkBudget.retries}/${value.reworkBudget.maxRetries}；${value.reworkBudget.guidance}` : ''}`; })()
       }]
     },
     isConcurrencySafe: () => false,
@@ -332,6 +332,17 @@ export function createLeadWorkerTools({ getBoard, getMemberCatalog, dispatchTask
 
       const result = board.review(args.taskId, args.passed, reviewFeedback);
       const task = result.tasks.find(item => item.id === args.taskId);
+      const maxRetries = board.config.maxRetries;
+      result.reworkBudget = {
+        taskId: args.taskId, maxRetries, retries: task?.retries,
+        remaining: Math.max(0, maxRetries - (task?.retries || 0)),
+        requiresRetryLimitApproval: task?.waitingReason === 'RETRY_LIMIT_REACHED',
+        guidance: task?.waitingReason === 'RETRY_LIMIT_REACHED'
+          ? '真实系统返工上限已达，必须取得用户专门授权。'
+          : task?.status === 'pending'
+            ? '已退回原任务返工，系统未触发超限审批；不得仅因次数或历史额外授权声明必须再次审批。用户最新明确限制、范围变更和安全确认仍单独适用。'
+            : '以当前任务状态为准；不要从历史反馈猜测返工额度。'
+      };
       if (task?.waitingReason === 'RETRY_LIMIT_REACHED') {
         try {
           const answer = await askUserQuestion([{
