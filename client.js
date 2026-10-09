@@ -1177,6 +1177,8 @@ window.__ModuleLoader__.load({
                   fontWeight: '600',
                   cursor: 'pointer',
                   boxShadow: '0 2px 6px rgba(0, 113, 227, 0.35)',
+                  marginLeft: 'auto',
+                  flexShrink: 0,
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '6px',
