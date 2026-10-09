@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import { readFileSync } from 'node:fs';
+test('task conversation opener uses injected service, never root uiWorkspace',async()=>{
+ let exports,button,error='',opened=0,closed=0;
+ const source=readFileSync(new URL('../client.js',import.meta.url),'utf8').replace('exports.apply = apply;', 'exports.Entry = TaskConversationEntry; exports.apply = apply;');
+ const React={createElement:(type,props,...children)=>{const node={type,props,children};if(type==='button')button=node;return node;},useState:()=>['',v=>{error=v;} ]};
+ const document={getElementById:()=>({}),};
+ vm.runInNewContext(source,{window:{__ModuleLoader__:{load:({factory})=>{exports=factory(name=>name==='react'?React:{});}}},document,encodeURIComponent});
+ const ctx={inject(keys,fn){assert.equal(keys[0],'uiWorkspace');fn({uiWorkspace:{async openSession(address){assert.equal(address.parentSessionId,'parent');assert.equal(address.childSessionId,'child');assert.equal(address.mode,'one-shot');opened++;}},on(){}});},slots:{inject(){}}};
+ Object.defineProperty(ctx,'uiWorkspace',{get(){throw Error('cannot get property uiWorkspace without inject');}});
+ exports.apply(ctx);
+ exports.Entry({sessionId:'parent',task:{evidence:{dispatch:{childId:'child'}}},onOpened:()=>{closed++;}});
+ await button.props.onClick({stopPropagation(){}});
+ assert.equal(error,'');assert.equal(opened,1);assert.equal(closed,1);
+ assert.equal(exports.Entry({sessionId:'parent',task:{}}),null);
+ assert.ok(source.includes('React.createElement(TaskConversationEntry, { sessionId, task })'),'floating monitor renders entry');
+ assert.ok(source.includes('React.createElement(TaskConversationEntry, { sessionId, task, onOpened: onClose })'),'dialog renders same entry');
+});

@@ -5,11 +5,11 @@ window.__ModuleLoader__.load({
     const exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
 
-    let clientContext = null;
+    let taskConversationOpener = null;
     async function openTaskChild(parentSessionId, childSessionId) {
       if (!parentSessionId || !childSessionId) throw new Error('该任务尚无可查看的子智能体会话');
-      if (typeof clientContext?.uiWorkspace?.openSession !== 'function') throw new Error('当前 DSH 未提供子会话查看接口，请升级宿主后再试');
-      await clientContext.uiWorkspace.openSession({ parentSessionId, childSessionId, mode: 'one-shot' });
+      if (!taskConversationOpener) throw new Error('DSH 子会话查看服务尚未就绪，请稍后重试');
+      await taskConversationOpener({ parentSessionId, childSessionId, mode: 'one-shot' });
     }
     const React = require('react');
     const { slots } = require('@deepseek-ai/dsh-client-ui-slots');
@@ -285,6 +285,18 @@ window.__ModuleLoader__.load({
       if (config?.leadPrompt && config.leadPrompt.includes('BOSS直派')) return true;
       try { return typeof localStorage !== 'undefined' && localStorage.getItem('dsh_boss_direct_mode') === 'true'; } catch { return false; }
     }
+    function TaskConversationEntry({ sessionId, task, onOpened }) {
+      const [error, setError] = React.useState('');
+      const childId = task.evidence?.dispatch?.childId || task.result?.evidence?.dispatch?.childId;
+      if (!childId) return null;
+      return React.createElement('div', { style: { margin: '6px 0' } },
+        React.createElement('button', { type: 'button', 'data-task-chat-entry': true, title: '打开本次执行对应的子智能体对话',
+          style: { cursor: 'pointer', padding: '4px 8px', borderRadius: '6px', color: 'inherit', background: 'transparent', border: '1px solid currentColor' },
+          onClick: async e => { e?.stopPropagation?.(); setError(''); try { await openTaskChild(sessionId, childId); onOpened?.(); } catch (err) { setError(err.message); } }
+        }, '↗ 查看当前任务对话'),
+        error && React.createElement('div', { role: 'alert', style: { color: '#c44', fontSize: 11 } }, error));
+    }
+
     function TaskExecutionControls({ sessionId, task, data }) {
       const [busy, setBusy] = React.useState(false);
       const [notice, setNotice] = React.useState('');
@@ -662,6 +674,7 @@ window.__ModuleLoader__.load({
                 React.createElement('div', { 'data-task-metrics': true, style: { display: 'flex', flexWrap: 'wrap', gap: '4px 14px', margin: '10px 0', color: t.textSecondary, fontSize: 10 } },
                   React.createElement('span', null, `耗时：${taskElapsed(task, current?.error || hidden ? current?.updatedAt : Date.now())}`),
                   React.createElement('span', { title: '返工次数为当前轮计数；超限获批后可能重计数，不等于累计历史' }, `返工次数：${Number.isFinite(task.retries) ? task.retries : '暂无数据'}`)),
+                React.createElement(TaskConversationEntry, { sessionId, task }),
                 React.createElement(TaskExecutionControls, { sessionId, task, data }),
                 reasons.length > 0 && React.createElement('div', { 'data-waiting-reasons': true, style: { padding: '7px 9px', borderRadius: 7, background: mutedSurface, color: t.textSecondary, fontSize: 11, marginBottom: 10 } }, reasons.join('；')),
                 React.createElement('details', { style: { fontSize: 11 } }, React.createElement('summary', { style: { cursor: 'pointer', color: t.textTertiary, padding: '2px 0' } }, '结果 / 审查 / 续做记录'),
@@ -1401,14 +1414,7 @@ window.__ModuleLoader__.load({
                 { style: { fontSize: '11px', color: t.isDark ? '#b8eac5' : '#1f6b35', padding: '7px 10px', backgroundColor: t.isDark ? 'rgba(52,199,89,0.12)' : 'rgba(52,199,89,0.08)', borderRadius: '8px', marginBottom: '8px', border: `1px solid ${t.isDark ? 'rgba(52,199,89,0.25)' : 'rgba(52,199,89,0.2)'}` } },
                 React.createElement('strong', null, task.evidence.dispatchStatus === 'completed' ? '✓ Lead Worker 子模型已完成调用' : task.evidence.dispatchStatus === 'failed' ? '⚠ Lead Worker 子模型启动失败' : '↗ Lead Worker 子模型已派发'),
                 React.createElement('div', { style: { marginTop: '3px' } }, `${task.evidence.dispatch.memberName} · ${task.evidence.dispatch.provider}/${task.evidence.dispatch.model}`),
-                task.evidence.dispatch.childId && React.createElement('button', {
-                  type: 'button', title: '打开本次执行对应的子智能体对话',
-                  style: { marginTop: '6px', cursor: 'pointer', padding: '4px 8px', borderRadius: '6px', color: t.textPrimary, background: t.bgBody, border: `1px solid ${t.borderWindow}` },
-                  onClick: async () => {
-                    try { await openTaskChild(sessionId, task.evidence.dispatch.childId); onClose?.(); }
-                    catch (err) { setErrorMsg(err.message); }
-                  }
-                }, '↗ 查看当前任务对话'),
+                React.createElement(TaskConversationEntry, { sessionId, task, onOpened: onClose }),
                 task.evidence.dispatchError && React.createElement('div', { style: { marginTop: '3px', color: t.textSecondary } }, task.evidence.dispatchError)
               ),
               task.evidence?.summary && React.createElement(
@@ -2209,7 +2215,10 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
-      clientContext = ctx;
+      ctx.inject?.(['uiWorkspace'], scope => {
+        taskConversationOpener = address => scope.uiWorkspace.openSession(address);
+        scope.on?.('dispose', () => { taskConversationOpener = null; });
+      });
       // 1. 全局 CSS 修复：彻底解决对话首页或原生背景下“白底白字”看不到入口的问题
       if (typeof document !== 'undefined') {
         const styleId = 'dsh-lead-worker-global-high-contrast';
