@@ -40,24 +40,28 @@ Subtasks must declare their relative file or directory paths (`writeScopes`). Th
 - The lead model uses `lead_worker_review` to evaluate deliverables against verified evidence and test outputs.
 - Pass: Unblocks dependent tasks. Fail: Logs review feedback and routes the task for rework.
 
-### 4. Bounded Rework Lifecycle
-- Reworking a task within its approved scope preserves task-level consent and execution history, avoiding whole-board re-approvals.
-- Governed by a retry cap (`maxRetries`). Once exhausted, the task pauses for user intervention to prevent runaway token expenditure. User authorization grants an extra attempt while retaining cumulative history.
-- Expanding a task's write scope or altering critical dependencies automatically invalidates previous execution consent to keep operations safe.
+### 4. Authoritative & Bounded Rework Lifecycle
+- **Real-Time Rework Budget Feedback**: The active `maxRetries` ceiling is dynamically injected into the lead system prompt, and the `lead_worker_review` tool provides structured budget tracking (`reworkBudget`: attempts used, configured cap, remaining quota, and status guidance). This strictly prevents LLMs from hallucinating an exhausted limit based on outdated dialog history when attempts remain available (e.g. at retry 3 with a cap of 10).
+- **Scope-Preserving Authorization**: Retrying within approved write scopes preserves task-level consent and execution history without needing repetitive whole-board re-approval.
+- **Strict Over-Limit Gates**: Only upon genuinely hitting the configured threshold (`RETRY_LIMIT_REACHED`) does the task pause for human intervention. Explicit user consent grants an additional retry credit while retaining full cumulative audit history.
+- **Write Scope Invalidation**: Expanding a task's write scope or altering critical dependencies immediately revokes prior execution approval to safeguard project files.
 
 ### 5. Per-Task Dynamic Model Routing
 - Switch execution models for specific tasks directly in the Web UI (e.g., assign reasoning models for architecture, coding specialists for implementation, lightweight models for test execution).
-- Specialized routes are private to the current conversation and task, preventing pollution of the shared member pool or interference with other boards.
+- Specialized routes are private to the current conversation and task (`task-route-*`), cleanly separated from shared team configurations. Updating global team rosters neither pollutes global members nor resets actively running worker tasks.
 
 ### 6. Draining, Checkpoints & Reliable Recovery
 - Supports board pause, interruption, graceful draining, and checkpoint archival.
 - Prior to shutdown, active worker executions drain cleanly, and disk state consistency is verified before safe termination is declared.
 - Preserves full execution state across DSH host restarts without clearing tasks or generating stale writes.
 
-### 7. Seamless DSH Web UI Integration
-- **Dual Capsule Toggles**: Native `👔 BOSS Mode` and `🚀 Autopilot` toggles embedded directly in the conversation input bar.
-- **Three-Cell Floating Monitor**: At-a-glance real-time counters for `[Running · Blue]`, `[Review · Gold]`, and `[Pending · Purple]` tasks.
-- **Interactive Board & Task Cards**: Inspect task dependencies, assignees, and criteria; reassign models, dispatch tasks manually, or trigger isolated retries with one click.
+### 7. Unified Floating Workspace & Seamless DSH Web UI
+- **Unified Floating Workspace**: Consolidates separate dialogs and monitors into an all-in-one floating workspace featuring seamless three-tab navigation across **[Tasks]**, **[Team Members]**, and **[Settings]**.
+- **Direct Subagent Chat Inspection (↗ View Task Conversation)**: Each task card provides a direct action to jump into the dedicated subagent execution session via DSH's injected `uiWorkspace` service, removing the need to search through large conversation histories.
+- **Free Dragging & Perimeter Resizing**: Effortlessly drag the window across the screen or resize it from any edge or corner. Supports compact folding and hiding without pausing background task execution.
+- **Right-Aligned Fixed Save Action**: The save action is conveniently pinned to the top-right header across settings and member tabs for intuitive configuration workflows.
+- **Dual Capsule Toggles**: Native `👔 BOSS Mode` and `🚀 Autopilot` toggles embedded directly in the conversation input bar for instantaneous mode switching.
+- **Non-Intrusive Deactivation**: Disabling BOSS Mode or Autopilot completely restores the primary model's unrestricted native capabilities—never blocking standard subagent, workflow, file, or terminal tools.
 
 ---
 
@@ -205,7 +209,14 @@ npm run test:client
 npm pack --dry-run
 ```
 
-Test coverage includes: board state machine transitions, concurrent write-scope collision prevention, rework consent preservation, retry budget protection, API origin safety, and UI status stream queueing.
+The project features **284 automated tests** and a dedicated client simulation suite, thoroughly validating:
+- Strict state machine transitions and dependency topology scheduling
+- Write scope collision prevention and non-overlapping parallel dispatch
+- Dynamic rework budget injection and genuine retry-limit authorization gates
+- Unified floating workspace tab switching, perimeter resizing, and state persistence
+- Direct subagent conversation navigation via DSH injected workspace services
+- Pure deactivation semantics and zero interference with native DSH tools
+- Multi-profile data isolation and CAS revision conflict safety
 
 ---
 
