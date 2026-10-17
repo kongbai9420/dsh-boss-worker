@@ -28,7 +28,7 @@ assert.deepEqual(Array.from(calls[0].exports.inject), ['slots']);
 assert.equal(source.includes('askUserQuestion('), false, 'client must not call an undefined question API');
 const registrations = [];
 calls[0].exports.apply({ slots: { inject: (_name, register) => register(), register: (spec, component) => { registrations.push(spec); assert.equal(typeof component, 'function'); } } });
-assert.equal(registrations.length, 4);
+assert.equal(registrations.length, 5);
 assert.ok(registrations.some(r => r.id === 'lead-worker-autopilot-input' && r.order === 11));
 assert.ok(registrations.some(r => r.id === 'lead-worker-boss-direct-input' && r.order === 10));
 assert.ok(registrations.some(r => r.name === 'conversation.input.right'));

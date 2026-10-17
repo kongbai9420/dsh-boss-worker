@@ -342,7 +342,7 @@ describe('针对性验证套件 (Targeted Verification Suite)', () => {
           register: (spec, comp) => registrations.push({ spec, comp })
         }
       });
-      assert.equal(registrations.length, 4);
+      assert.equal(registrations.length, 5);
       assert.ok(registrations.some(r => r.spec.id === 'lead-worker-autopilot-input'));
     });
   });

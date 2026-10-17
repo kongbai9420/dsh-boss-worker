@@ -13,3 +13,42 @@ jobs:
       - run: npm test
       - run: npm run test:client
       - run: npm pack --dry-run
+  host-compatibility:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dsh: 0.1.7-rc.2
+            cordis: 4.0.4
+            schemastery: 3.18.4
+          - dsh: 0.2.0-rc.2
+            cordis: 4.0.4
+            schemastery: 3.18.4
+          - dsh: 0.2.1-rc.2
+            cordis: 4.0.5
+            schemastery: 3.18.5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install isolated official host modules
+        run: >-
+          npm install --prefix .compat-host --ignore-scripts --no-audit --no-fund --save-exact
+          @deepseek-ai/cordis@${{ matrix.cordis }}
+          @deepseek-ai/schemastery@${{ matrix.schemastery }}
+          @deepseek-ai/dsh-tools@${{ matrix.dsh }}
+          @deepseek-ai/dsh-subagent@${{ matrix.dsh }}
+          @deepseek-ai/dsh-llm@${{ matrix.dsh }}
+          @deepseek-ai/dsh-agent@${{ matrix.dsh }}
+          @deepseek-ai/dsh-system-prompt@${{ matrix.dsh }}
+          @deepseek-ai/dsh-host-webserver@${{ matrix.dsh }}
+          @deepseek-ai/dsh-client-ui-slots@${{ matrix.dsh }}
+          @deepseek-ai/dsh-client-ui-conversation@${{ matrix.dsh }}
+      - name: Exercise real host services without model API calls
+        shell: pwsh
+        run: npm run test:host -- "$PWD/.compat-host/bin.js"
+      - name: Check official client slot contracts
+        shell: pwsh
+        run: npm run test:client-host -- "$PWD/.compat-host/bin.js"

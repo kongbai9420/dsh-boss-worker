@@ -21,6 +21,7 @@ import { normalizeEvidence } from './contracts.mjs';
 import { bossGuardReason, requireParent } from './boss-policy.mjs';
 import { notifyParentReview, getReviewNoticeStates } from './review-notifier.mjs';
 import { validateApiRequest } from './api-security.mjs';
+import { startWorker } from './subagent-compat.mjs';
 
 let createUserMessage;
 try { createUserMessage = (await loadHostModule('@deepseek-ai/dsh-llm')).createUserMessage; }
@@ -120,6 +121,11 @@ export class LeadWorkerHostService extends Service {
 
   constructor(ctx, config) {
     super(ctx, 'leadWorker');
+    // Cordis traces service calls through a Proxy. Bind this profile-owned
+    // service's methods to their instance so native private fields remain valid.
+    for (const name of Object.getOwnPropertyNames(LeadWorkerHostService.prototype)) {
+      if (name !== 'constructor') this[name] = this[name].bind(this);
+    }
     this.config = config ?? {};
     // Unit harnesses explicitly isolate APPDATA; never let inherited shell
     // DSH_PROFILE_DIR redirect those harnesses to a real running profile.
@@ -221,8 +227,9 @@ export class LeadWorkerHostService extends Service {
         name: 'lead-worker-coordination',
         order: 120,
         text: (context) => {
-          const sessionId = context.session?.header?.id;
-          if (!sessionId || context.session.header.parentSession || context.session.header.origin === 'subagent') return '';
+          const session = context.agent?.session || context.session;
+          const sessionId = session?.header?.id;
+          if (!sessionId || session.header.parentSession || session.header.origin === 'subagent') return '';
           const board = this.#boards.get(sessionId);
           const config = this.getConfig(sessionId);
           if (!config || !config.enabled) return '';
@@ -277,7 +284,7 @@ ${config.autopilot ? '【全自动托管已开启】用户已授权当前会话�
     // 3. 注册 WebServer HTTP API 路由
     ctx.inject(['webServer'], (webCtx) => {
       webCtx.webServer.register({
-        kind: 'prefixes',
+        kind: 'prefix',
         path: '/api/lead-worker',
         handler: async (req, res) => {
           const url = new URL(req.url, 'http://127.0.0.1');
@@ -1201,17 +1208,17 @@ ${task.result ? `【上次保留结果】: ${JSON.stringify(task.result)}` : ''}
         parent: parentAgent,
       };
 
-      const run = await subagents.start('spawn', request);
+      const run = await startWorker(subagents, request, this.ctx.get('agents'));
       executionEntry.run = run;
       executionEntry.childId = run.id || null;
-      const dispatch = { memberId: member.id, memberName: member.name, provider: member.provider, model: member.model, childId: run.id || null, label: request.label };
+      const dispatch = { memberId: member.id, memberName: member.name, provider: member.provider, model: member.model, childId: run.id || null, childMode: run.childMode || 'one-shot', label: request.label };
       board.recordDispatch(taskId, dispatch, epoch);
       this.ctx.logger.info(`BOSS直派子模型已启动: task=${task.id}, child=${run.id || '(未知)'}, route=${member.provider}/${member.model}`);
       // 先等待真实子模型返回；在此期间任务板保持 running，UI 可明确显示“执行中”。
       let result;
       try {
         result = await run.result;
-        const actual = run.localAgent?.session?.requestHeader?.()?.config;
+        const actual = run.localAgent?.options || run.localAgent?.session?.requestHeader?.()?.config;
         dispatch.actualProvider = actual?.provider || null;
         dispatch.actualModel = actual?.model || null;
         dispatch.routeVerified = Boolean(actual?.provider === member.provider && actual?.model === member.model);
@@ -1223,7 +1230,7 @@ ${task.result ? `【上次保留结果】: ${JSON.stringify(task.result)}` : ''}
         markSettled({ taskId, epoch, status: 'settled', stopReason: result?.stopReason });
       }
       if (result?.stopReason !== 'completed') {
-        const detail = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        const detail = result?.diagnostic || (typeof result?.error === 'string' ? result.error : result?.error?.message);
         throw new Error(`子模型未正常完成: ${result?.stopReason || '无完成状态'}${detail ? ` · ${detail}` : ''}`);
       }
       const outputText = (result?.output || []).map(b => b.text || '').join('\n') || '任务已执行完成';

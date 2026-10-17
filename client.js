@@ -6,10 +6,10 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
 
     let taskConversationOpener = null;
-    async function openTaskChild(parentSessionId, childSessionId) {
+    async function openTaskChild(parentSessionId, childSessionId, mode = 'one-shot') {
       if (!parentSessionId || !childSessionId) throw new Error('该任务尚无可查看的子智能体会话');
       if (!taskConversationOpener) throw new Error('DSH 子会话查看服务尚未就绪，请稍后重试');
-      await taskConversationOpener({ parentSessionId, childSessionId, mode: 'one-shot' });
+      await taskConversationOpener({ parentSessionId, childSessionId, mode });
     }
     const React = require('react');
     const { slots } = require('@deepseek-ai/dsh-client-ui-slots');
@@ -288,11 +288,12 @@ window.__ModuleLoader__.load({
     function TaskConversationEntry({ sessionId, task, onOpened }) {
       const [error, setError] = React.useState('');
       const childId = task.evidence?.dispatch?.childId || task.result?.evidence?.dispatch?.childId;
+      const childMode = task.evidence?.dispatch?.childMode || task.result?.evidence?.dispatch?.childMode || 'one-shot';
       if (!childId) return null;
       return React.createElement('div', { style: { margin: '6px 0' } },
         React.createElement('button', { type: 'button', 'data-task-chat-entry': true, title: '打开本次执行对应的子智能体对话',
           style: { cursor: 'pointer', padding: '4px 8px', borderRadius: '6px', color: 'inherit', background: 'transparent', border: '1px solid currentColor' },
-          onClick: async e => { e?.stopPropagation?.(); setError(''); try { await openTaskChild(sessionId, childId); onOpened?.(); } catch (err) { setError(err.message); } }
+          onClick: async e => { e?.stopPropagation?.(); setError(''); try { await openTaskChild(sessionId, childId, childMode); onOpened?.(); } catch (err) { setError(err.message); } }
         }, '↗ 查看当前任务对话'),
         error && React.createElement('div', { role: 'alert', style: { color: '#c44', fontSize: 11 } }, error));
     }
@@ -2275,6 +2276,14 @@ window.__ModuleLoader__.load({
           LeadWorkerAction
         )
       );
+
+      // DSH 0.2.1 declares the new-session action row as hero.options.
+      // Slot injection waits for a live declaration, so older hosts retain
+      // their existing entry without registering into an unknown slot.
+      ctx.slots.inject('conversation.hero.options', () => ctx.slots.register({
+        name: 'conversation.hero.options', id: 'lead-worker-hero-options', order: -18,
+        inject: sessionId => ({ sessionId })
+      }, LeadWorkerAction));
 
       // 4. 在对话界面输入框模型选择旁边注册「👔 BOSS直派」开关（带 BOSS 徽章）
       ctx.slots.inject('conversation.input.right', () =>

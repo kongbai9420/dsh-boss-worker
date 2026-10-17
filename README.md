@@ -4,8 +4,10 @@
 
 面向大型复杂工程项目的 DeepSeek Harness (DSH) 多模型主从协同插件：**主控架构统筹，子模型并行执行，闭环严苛验收**。
 
-> **当前版本**：`v0.1.0-beta.1` (Preview)
+> **当前版本**：`v0.1.0-beta.2` (Preview)
 > 专为大型重构、全栈开发、多模块审计等需要多模型高效配合的复杂场景打造。
+
+[下载 v0.1.0-beta.2](https://github.com/kongbai9420/dsh-boss-worker/releases/tag/v0.1.0-beta.2) · [更新记录](CHANGELOG.md) · [兼容性验证](COMPATIBILITY.md)
 
 ---
 
@@ -136,7 +138,15 @@ graph TD
 
 ### 前置要求
 - [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 运行时环境
-- Node.js `>= 20.0.0`
+- 最新 DSH 要求 Node.js `^22.19.0 || >=24.0.0`；兼容性 CI 使用 Node.js 24。
+
+### DSH 兼容性
+
+截至 2026-10-17，支持 npm `latest` 的 `0.2.0-rc.2`、官方最新 `next` 的 `0.2.1-rc.2`，并保留 `0.1.7-rc.2` 兼容。
+
+`beta.2` 适配新版 `startActivation`、启动后的中断/释放、新版提示词上下文及首页入口；旧版继续使用 `start`。新版已移除启动参数 `persona`，成员指令随子任务文本传递。版本声明不会跳过 DSH 自身的兼容性检查。
+
+CI 对三个版本分别安装官方依赖，使用真实 Cordis、工具、提示词、HTTP 和子任务服务进行离线验证，并检查官方前端插槽声明。模型执行使用可控测试后端；不调用模型 API，不代表已完成桌面端视觉验收。详细记录见 [COMPATIBILITY.md](COMPATIBILITY.md)。
 
 ### 接入 DSH 插件体系
 
@@ -206,9 +216,13 @@ npm run test:client
 
 # 验证发布包完整性与白名单过滤
 npm pack --dry-run
+
+# 对隔离安装的官方宿主运行兼容测试（传入绝对 bin.js 解析锚点）
+npm run test:host -- /absolute/path/to/isolated-host/bin.js
+npm run test:client-host -- /absolute/path/to/isolated-host/bin.js
 ```
 
-测试体系包含 **284 项自动化测试** 与独立前端客户端模拟，全面覆盖：
+测试体系包含 **289 项自动化测试**、独立前端客户端模拟及真实宿主兼容性检查，覆盖：
 - 任务生命周期与严格依赖拓扑调度
 - 跨任务写入范围重叠冲突与无交集并行校验
 - 精准返工额度注入与真实超限授权安全门禁

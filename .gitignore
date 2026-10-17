@@ -10,3 +10,4 @@ audit-evidence.json
 regression-output.txt
 .DS_Store
 coverage/
+.compat-host/

@@ -4,8 +4,10 @@
 
 Multi-model hierarchical coordination plugin for DeepSeek Harness (DSH): **Architectural planning and review by the Lead, parallel execution by Worker models, closed-loop verification**.
 
-> **Current Version**: `v0.1.0-beta.1` (Preview)
+> **Current Version**: `v0.1.0-beta.2` (Preview)
 > Designed for complex scenarios such as large-scale refactoring, full-stack feature development, and multi-module auditing where multi-model teamwork is essential.
+
+[Download v0.1.0-beta.2](https://github.com/kongbai9420/dsh-boss-worker/releases/tag/v0.1.0-beta.2) · [Changelog](CHANGELOG.md) · [Compatibility verification](COMPATIBILITY.md)
 
 ---
 
@@ -137,7 +139,15 @@ The lead model orchestrates teamwork through the following DSH tools:
 
 ### Prerequisites
 - [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) runtime
-- Node.js `>= 20.0.0`
+- Current DSH requires Node.js `^22.19.0 || >=24.0.0`; compatibility CI uses Node.js 24.
+
+### DSH compatibility
+
+As checked on 2026-10-17, this release supports npm `latest` (`0.2.0-rc.2`), the newest official `next` (`0.2.1-rc.2`), and the original `0.1.7-rc.2` target.
+
+`beta.2` adapts managed `startActivation` calls, post-start cancellation and disposal, current prompt assembly context, and the new-session action slot. Older hosts retain the `start` API. Since managed starts no longer accept `persona`, member instructions are included in the child's task text.
+
+CI installs official modules for each target and exercises real Cordis, tool, prompt, HTTP and subagent services with a controlled offline execution backend. Client checks use official slot contracts. These checks do not call model APIs or constitute desktop visual acceptance. See [COMPATIBILITY.md](COMPATIBILITY.md) for details.
 
 ### Registering with DSH
 
@@ -207,9 +217,13 @@ npm run test:client
 
 # Validate package distribution and manifest files
 npm pack --dry-run
+
+# Validate an isolated official host (absolute bin.js resolution anchor)
+npm run test:host -- /absolute/path/to/isolated-host/bin.js
+npm run test:client-host -- /absolute/path/to/isolated-host/bin.js
 ```
 
-The project features **284 automated tests** and a dedicated client simulation suite, thoroughly validating:
+The project features **289 automated tests**, a dedicated client simulation suite, and official-host compatibility checks covering:
 - Strict state machine transitions and dependency topology scheduling
 - Write scope collision prevention and non-overlapping parallel dispatch
 - Dynamic rework budget injection and genuine retry-limit authorization gates

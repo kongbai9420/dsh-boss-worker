@@ -8,12 +8,17 @@ test('task conversation opener uses injected service, never root uiWorkspace',as
  const React={createElement:(type,props,...children)=>{const node={type,props,children};if(type==='button')button=node;return node;},useState:()=>['',v=>{error=v;} ]};
  const document={getElementById:()=>({}),};
  vm.runInNewContext(source,{window:{__ModuleLoader__:{load:({factory})=>{exports=factory(name=>name==='react'?React:{});}}},document,encodeURIComponent});
- const ctx={inject(keys,fn){assert.equal(keys[0],'uiWorkspace');fn({uiWorkspace:{async openSession(address){assert.equal(address.parentSessionId,'parent');assert.equal(address.childSessionId,'child');assert.equal(address.mode,'one-shot');opened++;}},on(){}});},slots:{inject(){}}};
+ let expectedMode='one-shot';
+ const ctx={inject(keys,fn){assert.equal(keys[0],'uiWorkspace');fn({uiWorkspace:{async openSession(address){assert.equal(address.parentSessionId,'parent');assert.equal(address.childSessionId,'child');assert.equal(address.mode,expectedMode);opened++;}},on(){}});},slots:{inject(){}}};
  Object.defineProperty(ctx,'uiWorkspace',{get(){throw Error('cannot get property uiWorkspace without inject');}});
  exports.apply(ctx);
  exports.Entry({sessionId:'parent',task:{evidence:{dispatch:{childId:'child'}}},onOpened:()=>{closed++;}});
  await button.props.onClick({stopPropagation(){}});
  assert.equal(error,'');assert.equal(opened,1);assert.equal(closed,1);
+ expectedMode='unknown';
+ exports.Entry({sessionId:'parent',task:{evidence:{dispatch:{childId:'child',childMode:'unknown'}}}});
+ await button.props.onClick({stopPropagation(){}});
+ assert.equal(error,'');assert.equal(opened,2);
  assert.equal(exports.Entry({sessionId:'parent',task:{}}),null);
  assert.ok(source.includes('React.createElement(TaskConversationEntry, { sessionId, task })'),'floating monitor renders entry');
  assert.ok(source.includes('React.createElement(TaskConversationEntry, { sessionId, task, onOpened: onClose })'),'dialog renders same entry');

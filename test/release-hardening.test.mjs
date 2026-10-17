@@ -42,7 +42,7 @@ function fixture(t) {
       const service = new LeadWorkerHostService(ctx, {});
       const routes = ctx.webServer.routes;
       assert.equal(routes.length, 1);
-      assert.equal(routes[0].kind, 'prefixes');
+      assert.equal(routes[0].kind, 'prefix');
       assert.equal(routes[0].path, '/api/lead-worker');
       assert.equal(typeof routes[0].handler, 'function');
       return { ctx, service, handler: routes[0].handler, store: resolveStorePath(ctx) };
